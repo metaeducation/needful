@@ -1016,7 +1016,14 @@ void Needful_Panic_Abruptly(const char* error) {
 **    operations, anyway).  So lenient defaults the short name `known_cast()`.
 */
 
-#if !defined(NEEDFUL_DONT_DEFINE_OPTION_SHORTHANDS)
+#if !defined(NEEDFUL_DEFINE_ALL_SHORTHANDS)
+    #define NEEDFUL_DEFINE_ALL_SHORTHANDS  0
+#endif
+
+#if !defined(NEEDFUL_OPTION_SHORTHANDS)
+    #define NEEDFUL_OPTION_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_OPTION_SHORTHANDS
     #define Need /* (T) */          NeedfulNeed
     #define unwrap /* ... */        needful_unwrap
     #define needed /* ... */        needful_needed
@@ -1028,7 +1035,10 @@ void Needful_Panic_Abruptly(const char* error) {
     #define opt /* ... */           needful_opt
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_CAST_SHORTHANDS)
+#if !defined(NEEDFUL_CAST_SHORTHANDS)
+    #define NEEDFUL_CAST_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_CAST_SHORTHANDS
     #define cast /* (T,...) */      needful_cast
     #define raw_cast /* (T,...) */  needful_raw_cast
     #define fast_cast /* (T,...) */  needful_fast_cast
@@ -1037,11 +1047,14 @@ void Needful_Panic_Abruptly(const char* error) {
 
     #define m_cast /* (T,...) */    needful_mutable_cast
 
-  #if defined(NEEDFUL_ICAST_SLOW_BUILD)  /* default off for fast builds [1] */
-    #define i_cast /* (T,...) */    needful_integer_cast
-  #else
-    #define i_cast /* (T,...) */    needful_c_cast
-  #endif
+    #if !defined(NEEDFUL_ICAST_SLOW_BUILD)  /* default off, fast builds [1] */
+        #define NEEDFUL_ICAST_SLOW_BUILD  0
+    #endif
+    #if NEEDFUL_ICAST_SLOW_BUILD
+      #define i_cast /* (T,...) */    needful_integer_cast
+    #else
+      #define i_cast /* (T,...) */    needful_c_cast
+    #endif
     #define ii_cast /* (T,...) */   needful_integer_cast  /* see [1] */
 
     #define p_cast /* (T,...) */    needful_pointer_cast
@@ -1057,7 +1070,10 @@ void Needful_Panic_Abruptly(const char* error) {
     #define upcast /* (T,...) */    needful_upcast
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_RESULT_SHORTHANDS)
+#if !defined(NEEDFUL_RESULT_SHORTHANDS)
+    #define NEEDFUL_RESULT_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_RESULT_SHORTHANDS
     #define Result /* (T) */        NeedfulResult
 
     #define fail /* (...) */        needful_fail
@@ -1073,14 +1089,20 @@ void Needful_Panic_Abruptly(const char* error) {
     #define rescue /* (expr) */             needful_rescue
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_SINK_SHORTHANDS)
+#if !defined(NEEDFUL_CONTRA_SHORTHANDS)
+    #define NEEDFUL_CONTRA_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_CONTRA_SHORTHANDS
     #define Sink /* (T) */          NeedfulSink
     #define Init /* (T) */          NeedfulInit
     #define Contra /* (T) */        NeedfulContra
     #define Exact /* (T) */         NeedfulExact
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_KNOWN_SHORTHANDS)
+#if !defined(NEEDFUL_KNOWN_SHORTHANDS)
+    #define NEEDFUL_KNOWN_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_KNOWN_SHORTHANDS
     #define rigid_known /* (T,expr) */           needful_rigid_known
     #define rigid_known_not /* (T,expr) */       needful_rigid_known_not
     #define rigid_known_any /* ((T,...),expr) */ needful_rigid_known_any
@@ -1107,7 +1129,10 @@ void Needful_Panic_Abruptly(const char* error) {
     #define known_literal /* (T,expr) [3] */     needful_known_literal
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_COMMENT_SHORTHANDS)
+#if !defined(NEEDFUL_COMMENT_SHORTHANDS)
+    #define NEEDFUL_COMMENT_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_COMMENT_SHORTHANDS
     #define possibly /* (cond) */    needful_possibly
     #define impossible /* (cond) */  needful_impossible
     #define definitely /* (cond) */  needful_definitely
@@ -1127,7 +1152,10 @@ void Needful_Panic_Abruptly(const char* error) {
     #define CANT /* (expr) */            NEEDFUL_CANT
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_STATIC_ASSERT_SHORTHANDS)
+#if !defined(NEEDFUL_STATIC_ASSERT_SHORTHANDS)
+    #define NEEDFUL_STATIC_ASSERT_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_STATIC_ASSERT_SHORTHANDS
     #if !defined(STATIC_ASSERT)
         #define STATIC_ASSERT /* (...) */  NEEDFUL_STATIC_ASSERT
     #endif
@@ -1145,7 +1173,10 @@ void Needful_Panic_Abruptly(const char* error) {
     #endif
 #endif
 
-#if !defined(NEEDFUL_DONT_DEFINE_USAGE_SHORTHANDS)
+#if !defined(NEEDFUL_USAGE_SHORTHANDS)
+    #define NEEDFUL_USAGE_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_USAGE_SHORTHANDS
   #if !defined(USED)
     #define USED /* (...) */  NEEDFUL_USED
   #endif
