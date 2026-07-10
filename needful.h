@@ -308,11 +308,6 @@
 ** It leverages the natural boolean coercibility of the contained type.  So
 ** you can use it with things like pointers, integers or enums...anywhere the
 ** C build can treat 0 as a "falsey" state.
-**
-** In C this is all a no-op.  In C++ builds a wrapper class enforces that
-** Option(T) can't pass where T is expected without explicit unwrapping.  A
-** debug runtime check can also be enabled that panics if `unwrap` is called
-** on a null/zero Option.
 */
 
 typedef enum {
@@ -324,7 +319,22 @@ typedef enum {
 
 #define NeedfulOption(T)  T
 
-#define needful_opt
+#define needful_opt  /* no-op in C build */
+
+#define needful_postfix_extract_option  /* no-op in C build */
+
+
+/****[[ Fallible(T): LIKE Option(T) BUT RESULT MUST BE USED ]]****************
+**
+** Needful's Result(T) uses thread-global variables to multiplex an error on
+** top of an arbitrary return value.  Fallible(T) does something simpler: it
+** just lets you mark a return value as Fallible(T) to be a [[nodiscard]]
+** version of an Option(T) (like Rust's #[must_use]).
+**/
+
+#define NeedfulFallible(T)  T
+#define needful_unwrap_fallible  /* no-op in C build */
+#define needful_infallible  /* no-op in C build */
 
 
 /****[[ SCOPE_GUARD: PROTECT FROM UNSAFE MACRO USAGES ]]**********************
