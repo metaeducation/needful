@@ -926,31 +926,22 @@ void Needful_Panic_Abruptly(const char* error) {
 #define NEEDFUL_USES_CORRUPT_HELPER  0
 
 
-/****[[ MARK UNUSED VARIABLES ]]**********************************************
+/****[[ MARK USED/UNUSED VARIABLES ]]*****************************************
 **
 ** Used in coordination with the `-Wunused-variable` setting of the compiler.
-** While a simple cast to void is what people usually use for this purpose,
-** there's some potential for side-effects with volatiles:
 **
-**   https://stackoverflow.com/a/4030983/211160
+** NEEDFUL_UNUSED() can actually randomize non-const variable contents to
+** help detect use of something that was meant to be unused.
 **
-** The tricks suggested there for avoiding it seem to still trigger warnings
-** as compilers get new ones, so assume that won't be an issue.  As an
-** added check, this gives the UNUSED() macro "teeth" in C++11:
+** NEEDFUL_USED()
 **
-**   https://codereview.stackexchange.com/q/159439
-**
-** 1. Putting the (void)0 at the head of PASSTHRU may seem superfluous, but
-**    if you just define a macro as the plain parenthesization of its args,
-**    Clang will complain about unused results if you pass the product of
-**    a cast.  If you want the warning, just use parentheses, not PASSTHRU.
+** PASSTHRU() is to make commentary macros that do nothing, but Clang would
+** warn about an unused result if you said `#define Some_Remark(expr) (expr)`
 */
 
-#define NEEDFUL_USED(...)    ((void)(__VA_ARGS__))
-
 #define NEEDFUL_UNUSED(...)  ((void)(__VA_ARGS__))
-
-#define NEEDFUL_PASSTHRU(...)  ((void)0, __VA_ARGS__)  /* see [1] */
+#define NEEDFUL_USED(...)    ((void)(__VA_ARGS__))
+#define NEEDFUL_PASSTHRU(...)  ((void)0, __VA_ARGS__)  /* (void)0 for Clang */
 
 
 /****[[ STATIC_ASSERT, STATIC_IGNORE, STATIC_FAIL ]]**************************
