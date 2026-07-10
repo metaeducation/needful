@@ -81,15 +81,19 @@
 **
 **      https://github.com/metaeducation/needful-enhanced
 **
-**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11 (or later).
-**      Same source, stricter checking: type mismatches become compile errors.
+**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11 (or even
+**      better, C++17!)  Same source, stricter checking: type mismatches
+**      become compile errors.
 **
 **   3. You can run both build modes in CI: the C build for production,
 **      the C++ build to catch bugs.  No code changes needed between them.
 **
 ** The C definitions in this file are intentionally written out in full so
-** you can see how simple they are.  Adding Needful to a C project is a
-** low-impact proposition: one file, no dependencies, no magic.
+** you can see how simple they are.  (Conditional code on `#ifdef __cplusplus`
+** is only used when *absolutely necessary* in needful.h; C++ variations are
+** done with `#undef` and then re-`#define`-ing.)  This helps you see that
+** adding Needful to a C project is a low-impact proposition: one file,
+** no dependencies, no magic.
 **
 ****[[ NOTES ]]***************************************************************
 **
@@ -140,46 +144,27 @@
 **    printf("%d\n", *ptr);  // safe to dereference, can't be null
 **
 **    if (ptr) { ... }  // ** COMPILE ERROR in C++ builds!
-**
-** While compile-time checks are the primary purpose, runtime checks can
-** also be enabled to catch nulls or zeroes passed to a Need(T) parameter.
 */
 
 #define NeedfulNeed(T)  T
-#define needful_unwrap
-#define needful_needed
+#define needful_unwrap  /* no-op in C build */
+#define needful_needed  /* no-op in C build */
 
 
-/****[[ nocast: VOID* IMPLICIT COERCION FOR C/C++ COMPATIBILITY ]]************
+/****[[ nocast: IMPLICIT COERCION FOR C/C++ COMPATIBILITY ]]*****************
 **
 ** Docs: https://needful.metaeducation.com/nocast
 **
-** C allows void* to coerce implicitly to any pointer type; C++ does not.
-** `nocast` bridges this for malloc() results, enum initialization, and other
-** places where C's implicit coercions are needed in a C++ build:
+** Bridges C's implicit void* and enum coercions into C++ builds:
 **
-**     SomeType* ptr = nocast malloc(sizeof(SomeType));  // C and C++ both
-**     SomeEnum  e   = nocast 0;                         // C and C++ both
+**     SomeType* ptr = nocast malloc(sizeof(SomeType));  // works in C++...
+**     SomeEnum  e   = nocast some_int_value;            // ...as does this!
 **
-** In C the macro is empty.  In C++ it expands to a helper object using
-** operator+ (lower precedence than %, which appears in Option/Result) that
-** injects the appropriate static_cast to the assignment target's type.
-**
-** Note: nocast requires C++ mechanics even without NEEDFUL_CPP_ENHANCED,
-** hence the unconditional #ifdef __cplusplus block below.
-**
-** 1. NocastConvert: two cases need special handling.  static_cast
-**    already handles void* -> T*, int -> enum, and same-type conversions.
-**    The exception: int -> T* must substitute nullptr (C++ forbids
-**    implicit int-to-pointer conversion, even for literal 0).  Also,
-**    pointer-to-pointer casts (e.g. Derived** -> Base**) fail with
-**    static_cast because C++ doesn't support covariant multi-level
-**    pointer conversions; a C-style cast replicates C's behavior.
-**
-** 2. The choice of `+` as the operator to use is intentional due to wanting
-**    something with lower precedence than `%` (used in Result and Optional)
+** Empty macro in C.  In C++, generates a proxy object using `operator+` to
+** implicitly trigger the correct static_cast (or C-cast for deep pointers).
 **/
-#ifndef __cplusplus
+
+#if !defined(__cplusplus)  // need C++ mechanics even w/o NEEDFUL_CPP_ENHANCED
     #define needful_nocast
 #else
     #include <type_traits>
@@ -188,12 +173,9 @@
     struct NocastMaker {};
 
     template<
-        class To, class From,
+        class To, class From,  // `From` pass-by-value, (no remove_reference)
         bool IntToPtr =  /* only one case needs special handling [1] */
-            std::is_pointer<To>::value &&
-            std::is_integral<
-                typename std::remove_reference<From>::type
-            >::value
+            std::is_pointer<To>::value && std::is_integral<From>::value
     >
     struct NocastConvert {
         static To Do_Conversion(From f) { return static_cast<To>(f); }
@@ -204,7 +186,7 @@
         static To Do_Conversion(From) { return static_cast<To>(nullptr); }
     };
 
-    template<class To, class From>  /* pointer-to-pointer via C-style [1] */
+    template<class To, class From>  /* pointer-to-pointer via C-style */
     struct NocastConvert<To*, From*, /*IntToPtr*/ false> {
         static To* Do_Conversion(From* f) { return (To*)(f); }
     };
@@ -219,13 +201,13 @@
         }
     };
 
-    template<class T>  // choice of operator+ is meaningful [2]
+    template<class T>  /* `+` for lower precedence than `%` for Result(T)  */
     inline NocastHolder<T> operator+(NocastMaker, T v) { return { v }; }
 
     constexpr NocastMaker g_nocast_maker{};
   }
 
-    #define needful_nocast    needful::g_nocast_maker +
+    #define needful_nocast  needful::g_nocast_maker +
 #endif
 
 
@@ -345,9 +327,6 @@ typedef enum {
 **
 ** Creates a unique-named unused variable so that macros like trap/require/
 ** assume produce a compile error if used in an unbraced branch slot.
-**
-** 1. Clang 15 makes this more aggressive than necessary (e.g. forbids use
-**    in a switch case without braces).
 */
 
 #define NEEDFUL_NOOP  ((void)0)
@@ -423,42 +402,12 @@ typedef enum {
 ** handling errors in a style similar to Rust's `Result<T, E>`, all without
 ** requiring exceptions or setjmp/longjmp in C++ builds.
 **
-** The multiplexing of an Error with the return value type is done with a
-** global (or more generally, thread-local) error state.
-**
-** A key feature is the ability to propagate errors automatically.  So
-** instead of having to laboriously write things like:
-**
-**     Error* Some_Func(int* result, int x) {
-**         if (x < 304)
-**             return fail ("the value is too small");
-**         *result = x + 20;
-**         return nullptr;  // no error
-**     }
-**
-**     Error* Other_Func(int* result) {
-**         int y;
-**         Error* e = Some_Func(&y, 1000);
-**         if (e)
-**             return e;
-**         assert(y == 1020);
-**
-**         int z;
-**         Error* e = Some_Func(&z, 10);
-**         if (e)
-**             return e;
-**         printf("this would never be reached...");
-**
-**         *result = z;
-**         return nullptr;  // no error
-**     }
-**
-** You can write it like this:
+** You can write code like this:
 **
 **     Result(int) Some_Func(int x) {
 **         if (x < 304)
 **             return fail ("the value is too small");
-**         return x + 20;
+**         return x + 20;  // ^-- sets thread-local state
 **     }
 **
 **     Result(int) Other_Func(void) {
@@ -468,7 +417,7 @@ typedef enum {
 **         assert(y == 1020);
 **
 **         trap (
-**           int z = Some_Func(10)
+**           int z = Some_Func(10)  // embedded `return` bubbles the failure
 **         );
 **         printf("this would never be reached...");
 **
@@ -480,8 +429,7 @@ typedef enum {
 ** particularly natural due to clever use of a `for` loop to get a scope:
 **
 **     int result = Some_Func(10 + 20) except (Error* e) {
-**         // e scoped to the block
-**         printf("caught an error: %s\n", e->message);
+**         printf("caught an error: %s\n", e->message);  // e scoped to block
 **     }
 **     else {
 **         printf("didn't have an error, and else clause works!!");
@@ -490,27 +438,6 @@ typedef enum {
 ** So the macros enable a shockingly literate style of programming that is
 ** portable between C and C++, avoids exceptions and longjmps, and provides
 ** clear, explicit error handling and propagation.
-**
-** In order for these macros to work, they need to be able to test and clear
-** the global error state...as well as a flag as to whether the failure is
-** divergent or not.  Hence you have to define:
-**
-**     ErrorType* Needful_Test_And_Clear_Failure()
-**     ErrorType* Needful_Get_Failure()
-**     void Needful_Set_Failure(ErrorType* error)
-**     void Needful_Panic_Abruptly()
-**     void Needful_Assert_Not_Failing()  // avoids assert() dependency
-**
-** These can be functions or macros with the same signature.  They should use
-** thread-local state if they're to work in multi-threaded code.
-**
-** 1. It bears some explanation that the trick to get except() to be able to
-**    take an else() clause involves a for loop that runs exactly once.  It
-**    accomplishes this using the C99 feature allowing you do declare multiple
-**    variables scoped to a for loop *if* they are of the same type.  If we
-**    assume your error type is a pointer, then we can declare both the error
-**    variable and a dummy pointer `_once` in the loop, and use a pointer
-**    increment to ensure the loop only runs once.  :-)
 */
 
 #define NeedfulResult(T)  T
@@ -554,7 +481,7 @@ typedef enum {
     Needful_Assert_Not_Failing()
 
 #define needful_except(_decl_) \
-    /* _stmt_ */ needful_postfix_extract_result; /* v-- see [1] */ \
+    /* _stmt_ */ needful_postfix_extract_result; /* v-- see docs RE:_once */ \
     for (_decl_ = Needful_Get_Failure(), *_once = nullptr; !_once; ++_once) \
       if (Needful_Test_And_Clear_Failure()) /* allow else clause to attach */
         /* {body} implicitly picked up after macro by for, decl is scoped */
@@ -627,33 +554,31 @@ void Needful_Panic_Abruptly(const char* error) {
 ** input parameters, and "contravariance" for output parameters.  This only
 ** matters if you're applying inheritance selectively to datatypes in C++
 ** builds to add checking to your C codebase.  See the implementation of
-** the contravariance in %needful-sinks.h for more details.
+** contravariance in /needful-enhanced/needful-contra.hpp for more details.
 */
 
 #define NeedfulSink(T)  T *
 #define NeedfulInit(T)  T *
 
 #define NeedfulContra(T)  T *
-#define NeedfulExact(T)  T  // precise type
+#define NeedfulExact(T)  T  /* precise type */
 
 
 /****[[ known(T,expr): COMPILE-TIME TYPE ASSERTION INSIDE MACROS ]]**********
 **
 ** Docs: https://needful.metaeducation.com/known
 **
-** Type-checks an expression against T at compile-time with zero runtime
-** cost--uses no function template, so it's never a call even in unoptimized
-** debug builds:
+** Type-checks an expression against T at compile-time without runtime cost.
+** Uses no function template, so not a call even in unoptimized debug builds!
 **
 **      int* ptr = ...;
 **      void *p = known(int*, ptr);  // succeeds at compile-time
 **
 **      char* ptr = ...;
-**      void *p = known(int*, ptr);   // fails at compile-time
+**      void *p = known(int*, ptr);   // ERROR: fails at compile-time
 **
-** 1. The default (lenient) form passes through a const T* if the input is
-**    const, rather than requiring `const T*` at the callsite.  Use
-**    `rigid_known()` to enforce mutability.
+** As with casts, lenient forms pass through a const T* if the input is const,
+** vs. needing `const T*` at callsites.  `rigid_known()` enforces mutability.
 */
 
 #define needful_lenient_known(T,expr)        (expr)
@@ -663,7 +588,7 @@ void Needful_Panic_Abruptly(const char* error) {
 #define needful_lenient_known_not(T,expr)    (expr)
 
 #define needful_rigid_known_any(TLIST,expr)  (expr)
-/* no neeedful_lenient_known_any yet */
+/* no needful_lenient_known_any yet */
 
 #define needful_known_lvalue(variable)  (*&variable)
 
@@ -678,7 +603,7 @@ void Needful_Panic_Abruptly(const char* error) {
 
 #define ENABLE_IF_EXACT_ARG_TYPE(...)
 #define DISABLE_IF_EXACT_ARG_TYPE(...)
-#define ENABLEABLE(T, name) T name
+#define ENABLEABLE(T, name)  T name
 
 
 /****[[ VISIBLE (AND HOOKABLE!) ERGONOMIC CASTS ]]****************************
@@ -687,30 +612,31 @@ void Needful_Panic_Abruptly(const char* error) {
 **
 ** These macros for casting provide *easier-to-spot* variants of parentheses
 ** cast (so you can see where the casts are in otherwise-parenthesized
-** expressions).  They also help document at the callsite what the semantic
-** purpose of the cast is.
+** expressions).  They also document the semantic purpose of the cast.
 **
-** The definitions in C are trivial--they just act like a parenthesized cast.
-** But NEEDFUL_CPP_ENHANCED builds let the casts enforce narrower policies and
-** validation logic.  In release builds, the casts have zero overhead.
+** The C definitions are trivial: they all act like a parenthesized cast.  But
+** NEEDFUL_CPP_ENHANCED builds enforce narrower policies.  Also, the casts are
+** designed to be "hookable" in C++.  These can be compile-time checks (to
+** limit what types can be cast to what), as well as runtime checks that can
+** actually validate the bits being cast are legal for the target type!
 **
-** Also, the casts are designed to be "hookable" so that customized checks
-** can be added in C++ builds.  These can be compile-time checks (to limit
-** what types can be cast to what)...as well as runtime checks in your debug
-** builds, that can actually validate that the data being cast is legal for
-** the target type!  ("raw_cast" skips this validation)
+** All casts have zero overhead in release builds.  And Needful bends over
+** backwards so that debug builds (which won't inline functions) avoid using
+** functions where possible--almost everything is done at compile-time.
 **
 *****[[ CAST SELECTION GUIDE ]]***********************************************
 **
 ** SAFETY LEVEL
-**    - Hookable cast:            cast()      // safe default w/debug hooks
-**    - Unhooked/unchecked cast:  raw_cast()  // use with fresh malloc()s
-**                                               // ...or critical debug paths
+**    - Hookable cast:            cast()       // safe default w/debug hooks
+**    - Unhooked/unchecked cast:  raw_cast()   // e.g. for fresh malloc()s
+**    - Raw cast of valid data:   fast_cast()  // to avoid hooks on hot paths
 **
 ** POINTER CONSTNESS
 **    - Adding mutability:         m_cast()    // const T* => T*
-**    - Preserve mutability:       cast()      // TA* => TB* ...or...
-**                               & raw_cast()    // const TA* => const TB*
+**    - Preserve mutability:       <lenient>   // "to TB*" is TA* => TB* or...
+**                                               // const TA* => const TB*
+**    - Enforce mutability:        <rigid>     // "to const TB*" is const TB*
+**                                               // "to TB*" needs mutable TA*
 **
 ** TYPE CONVERSIONS
 **    - intlike to intlike:        i_cast()    // enum E => int, int => enum E
@@ -718,46 +644,20 @@ void Needful_Panic_Abruptly(const char* error) {
 **    - Non-integral to integral:  p_cast()    // T* => intptr_t
 **    - Function to function:      f_cast()    // ret1(*)(...) => ret2(*)(...)
 **    - va_list to void*:          v_cast()    // va_list* <=> void*
+**
+** HIERARCHICAL CASTS
+**    - Up (Derived* => Base*):    upcast()     // ensures types are related
+**    - Down (Base* => Derived*):  downcast     // operator: `downcast expr`
+**
+** LAST RESORT
+**    - Higher visibility C cast:  c_cast()     // same as parentheses cast
 */
 
+#define needful_lenient_hookable_cast(T,expr)       ((T)(expr))
+#define needful_lenient_unhookable_cast(T,expr)     ((T)(expr))
 
-/****[[ cast() and raw_cast(): MAIN CAST ]]***********************************
-**
-** 1. As with all needful macros, we don't force short names on clients.
-**    You may have a `cast()` function or variable in your codebase, and if
-**    that's more important than having the macro be named cast() you can
-**    define it some other way.  But a short name like cast() or coerce()
-**    is certainly recommended to get the maximum benefit.
-**
-** 2. You don't always want to run validation hooks when casting that make
-**    sure the data is valid for the target type.  For example, if you are
-**    casting a fresh malloc(), the data won't be initialized yet.  It may
-**    also be that performance critical code wants to avoid the overhead
-**    of validation--even in debug builds.
-**
-** 3. By default the casts are "lenient" in terms of constness, in the sense
-**    that if you try to cast a const pointer to a non-const pointer, it
-**    won't error...but will pass through a const version of the target type.
-**    This makes casts briefer, e.g. you don't have to be redundant:
-**
-**       void Some_Func(const Base* base) {
-**           const Derived* derived = cast(const Derived*, base);
-**              // why not just Derived*? --^
-**       }
-**
-**    If you just do `cast(Derived*, base)` the C build would just do a cast
-**    to the mutable Derived*, but you'd get the const correctness in the C++
-**    build with less typing.  In any case, the "rigid" casts don't do this
-**    passthru, so you get an error omitting const in such cases.
-*/
-
-#define needful_lenient_hookable_cast(T,expr)       ((T)(expr))  /* [1] */
-
-#define needful_lenient_unhookable_cast(T,expr)     ((T)(expr))  /* [1] */
-
-#define needful_cast /* (T,expr) */  needful_lenient_hookable_cast
-
-#define needful_raw_cast /* (T,expr) [2] */    needful_lenient_unhookable_cast
+#define needful_cast /* (T,expr) */           needful_lenient_hookable_cast
+#define needful_raw_cast /* (T,expr) */       needful_lenient_unhookable_cast
 
 #if defined(NEEDFUL_FAST_CAST_IS_SLOW)
     #define needful_fast_cast /* (T,expr) */   needful_lenient_hookable_cast
@@ -765,102 +665,39 @@ void Needful_Panic_Abruptly(const char* error) {
     #define needful_fast_cast /* (T,expr) */   needful_lenient_unhookable_cast
 #endif
 
-#define needful_rigid_hookable_cast(T,expr)         ((T)(expr))  /* [3] */
-
-#define needful_rigid_unhookable_cast(T,expr)       ((T)(expr))
-
-
-/****[[ m_cast(): MUTABILITY CAST ]]******************************************
-**
-** The mutable cast removes constness from a type.  It's another case where
-** a C++ compiler will not allow you to do what C allows with a parentheses
-** cast, so this macro has to be conditional on __cplusplus.
-**
-** m_cast() is friendlier than C++'s const_cast<> in that you can use it to
-** cast away constness along with casting to any needful_upcast()-able type.
-** So you can do things like:
-**
-**     const Derived* d = ...;
-**     Base* b = m_cast(Base*, d);
-**
-** The enhanced version in C++ builds enforces the Base/Derived relationship,
-** while this crude version just matches the C semaantics and does not.
-**
-** If using NEEDFUL_CPP_ENHANCED, the mutable cast can work on "wrapped"
-** types as well, removing constness through the wrapper.  See the enhanced
-** feature NEEDFUL_DECLARE_WRAPPED_FIELD() for more details.
-*/
+#define needful_rigid_hookable_cast(T,expr)    ((T)(expr))
+#define needful_rigid_unhookable_cast(T,expr)  ((T)(expr))
 
 #if !defined(__cplusplus)
     #define needful_mutable_cast(T,expr) \
-        ((T)(expr))  // C allows const to be cast away via parentheses
+        ((T)(expr))  /* C allows const to be cast away via parentheses */
 #else
     #define needful_mutable_cast(T,expr) \
-        const_cast<T>((const T)(expr))
+        const_cast<T>((const T)(expr))  /* C++ mandates a const_cast<> */
 #endif
 
-
-/****[[ i_cast(), p_cast(), f_cast(): NARROWED CASTS ]]***********************
-**
-** Narrow casts for cross-domain conversions (int<->enum, pointer<->integer,
-** function pointer reinterpretation).  Calling these out separately makes
-** them visible in source; C++ builds can give them stricter policies.
-*/
-
 #define needful_pointer_cast(T,expr)    ((T)(expr))
-
-#define needful_integer_cast(T,expr)   ((T)(expr))
-
+#define needful_integer_cast(T,expr)    ((T)(expr))
 #define needful_function_cast(T,expr)   ((T)(expr))
-
-
-/****[[ v_cast(): VA_LIST CAST ]]*********************************************
-**
-** `va_list*` is compiler-specific enough that regular casts aren't safe.
-** C++ builds enforce only `va_list* <-> void*` is permitted.
-** Opt out of the <stdarg.h> include with NEEDFUL_DONT_INCLUDE_STDARG_H.
-*/
-
 #define needful_valist_cast(T,expr)     ((T)(expr))
 
-
-/****[[ downcast: "INHERITANCE" CASTING ]]************************************
-**
-** Casts downward in a C-style type hierarchy (base -> derived).  C++
-** enhanced builds enforce the relationship; plain C and unenhanced C++
-** treat it as void*.  Requires nocast to compile in unenhanced C++ builds.
-*/
-
 #if !defined(__cplusplus)
-    #define needful_hookable_downcast  (void*)
+    #define needful_hookable_downcast    (void*)
     #define needful_unhookable_downcast  (void*)
 #else
-    #define needful_hookable_downcast  needful_nocast
+    #define needful_hookable_downcast    needful_nocast
     #define needful_unhookable_downcast  needful_nocast
 #endif
 
-#define needful_downcast /* (T,expr) */  needful_hookable_downcast
-
+#define needful_downcast /* (T,expr) */        needful_hookable_downcast
 #define needful_raw_downcast /* (T,expr) */    needful_unhookable_downcast
+#define needful_upcast /* (T,expr) */          needful_c_cast
 
 #if defined(NEEDFUL_FAST_CAST_IS_SLOW)
     #define needful_fast_downcast /* (T,expr) */   needful_hookable_downcast
 #else
     #define needful_fast_downcast /* (T,expr) */   needful_unhookable_downcast
 #endif
-
-
-
-/****[[ c_cast(): "WHAT PARENTHESES-CAST WOULD DO" ]]*************************
-**
-** The parentheses-cast is the only cast in C, so it is maximally permissive.
-** In C++, it defaults to giving warnings if you cast away constness...but
-** any standards-compliant compiler must let you disable that warning.
-**
-** If you are in a situation where the Needful casts are not working for you,
-** the c_cast() is a way to fall back on the C cast while still being
-** more visible as a cast in a code than parentheses.
-*/
 
 #define needful_c_cast(T,...) \
     ((T)(__VA_ARGS__))
@@ -877,17 +714,6 @@ void Needful_Panic_Abruptly(const char* error) {
 
 #define needful_lenient_c_cast_known(T,expr) /* const passthru const [1] */ \
     needful_c_cast(T,expr)
-
-
-/****[[ upcast: CAST SAFELY UPWARD ]]*****************************************
-**
-** upcast() is useful when defining macros, where you expect what you're
-** doing to be safe.  The default definition doesn't enforce that it's an
-** upcast, but the C++ enhancement will do that enforcement.
-*/
-
-#define needful_upcast /* (T,expr) */  needful_c_cast
-
 
 
 /****[[ NEEDFUL_DOES_CORRUPTIONS + CORRUPTION SEED/DOSE ]]********************
@@ -1011,19 +837,8 @@ void Needful_Panic_Abruptly(const char* error) {
 **     possibly(i < 0);
 **
 ** But the C++ overload of STATIC_ASSERT_DECLTYPE_BOOL() allows it to make
-** sure your expression is well-formed at compile-time.  It still does nothing
-** at run-time, but causes a compile-time error if the variable is renamed and
-** not updated, etc.  `impossible()` is a similar trick, but for documenting
-** things that are invariants, but not worth paying for a runtime assert.
-**
-** `unnecessary()` and `dont()` aren't boolean-constrained, and help document
-** lines of code that are not needed (or would actively break things), while
-** ensuring the expressions are up-to-date and valid.  `cant()` is for things
-** you might like to do, but some current limitation prevents it.
-**
-** `heeded()` marks things that look stray or like they have no effect, but
-** their side-effect is intentional (perhaps only in debug builds, that check
-** for what they did).
+** sure your expression is well-formed at compile-time.  This pattern is
+** applied to the others as well, keeping your identifiers up to date.
 **
 ** Uppercase versions, can be used in global scope (more limited abilities)
 */
@@ -1085,37 +900,11 @@ void Needful_Panic_Abruptly(const char* error) {
 **
 ******************************************************************************
 **
-** If you use these words for things like variable names, you will have
-** problems if they are defined as macros.  You can pick your own terms but
-** these are the ones that were used in Needful's original client.
-**
 ** These are SIMPLE ALIASES, and the parameterization is given as a comment
 ** for documentation purposes.  There can be big breakages when an expansion
 ** might produce commas inside angle brackets in C++ builds, and variadic
 ** forwarding doesn't always work around that.  It's cleaner and safer (and
 ** faster at compile time) to do it this way.
-**
-** 1. needful_integer_cast() has been honed to slow down build times about as
-**    much as possible, while having zero runtime cost even in unoptimized
-**    builds (an important property one seeks for something as fundamental as
-**    an integer cast).  But it's still slow--enough so that replacing all
-**    integer casts with i_cast() in one codebase made it take 2x as long to
-**    compile.  So day-to-day dev builds should probably leave i_cast() as
-**    a macro for the plain c_cast().  However if you're using wrapper
-**    classes the needful_integer_cast() can actually be zero cost where a
-**    C cast would not be; so judicious use of ii_cast() on hot paths in
-**    debug builds extracting integers from wrappers can be a good idea.
-**
-** 2. A quick and dirty way to write `return failed;` and not have to come
-**    up with an error might be useful in some codebases.  We don't try to
-**    define that here, because it's open ended as to what you'd use for
-**    your error value type.
-**
-** 3. The lenient form of known_cast() is quite useful for writing polymorphic
-**    macros which are const-in => const-out and mutable-in => mutable-out.
-**    This tends to be more useful than wanting to enforce that only mutable
-**    pointers can be passed into a macro (the bulk of macros are reading
-**    operations, anyway).  So lenient defaults the short name `known_cast()`.
 */
 
 #if !defined(NEEDFUL_DEFINE_ALL_SHORTHANDS)
@@ -1321,18 +1110,9 @@ void Needful_Panic_Abruptly(const char* error) {
 **
 ******************************************************************************
 **
-** needful.h is written out with all the "noop" definitions first, to help
-** give a clear sense to people how trivial and non-invasive the library can
-** be for C programs--introducing no dependencies or complexity.  There's
-** non-zero value to the documentation that these definitions provide, even
-** with minimal behavior (and the Result(T) handling still has runtime
-** benefits).
-**
-** But the *REAL* power of Needful comes from C++ builds, performing powerful
-** compile-time checks (and optional runtime validations).
-**
-** When these headers are activated, they will #undef the simple definitions
-** given above, and redefine them with actual machinery to give them teeth!
+** When NEEDFUL_CPP_ENHANCED builds are activated, then supplemental C++
+** headers will #undef the simple definitions given above, and redefine them
+** with elaborately-designed machinery!
 */
 
 #if !defined(NEEDFUL_CPP_ENHANCED)
