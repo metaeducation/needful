@@ -352,15 +352,15 @@ typedef enum {
 
 #define NEEDFUL_NOOP  ((void)0)
 
+#define NEEDFUL_PASTE2(a, b)  a##b
+#define NEEDFUL_PASTE1(a, b)  NEEDFUL_PASTE2(a, b)
+
+#define NEEDFUL_UNIQUE_NAME(base)  NEEDFUL_PASTE1(base, __LINE__)
+
 #if defined(NDEBUG)
     #define NEEDFUL_SCOPE_GUARD  NEEDFUL_NOOP
 #else
-    #define NEEDFUL_PASTE2(a, b)  a##b
-    #define NEEDFUL_PASTE1(a, b)  NEEDFUL_PASTE2(a, b)
-
-    #define NEEDFUL_UNIQUE_NAME(base)  NEEDFUL_PASTE1(base, __LINE__)
-
-    #define NEEDFUL_SCOPE_GUARD /* Clang v15 has some trouble [1] */ \
+    #define NEEDFUL_SCOPE_GUARD /* Clang v15 needs braces in switch cases */ \
         int NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_); \
         NEEDFUL_UNUSED(NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_))
 #endif
@@ -958,16 +958,16 @@ void Needful_Panic_Abruptly(const char* error) {
 ** 1. C11 added _Static_assert(), so use that when available in C builds.
 **    Pre-C11 C has too many edge cases for a portable shim, so it remains
 **    a no-op there.  The C++ enhanced build enforces STATIC_ASSERT in all
-**    standards modes.
+**    standards (we avoid non-essential __cplusplus #ifdefs in needful.h)
 */
 
-#define NEEDFUL_STATIC_IGNORE(expr) /* uses trick for callsite semicolons */ \
-    struct GlobalScopeNoopTrick  /* https://stackoverflow.com/q/53923706 */
+#define NEEDFUL_STATIC_IGNORE(expr) /* https://stackoverflow.com/q/53923706 */ \
+    struct NEEDFUL_UNIQUE_NAME(needful_noop_)  /* callsite semicolon trick */
 
 #if !defined(__cplusplus) \
     && defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
     #define NEEDFUL_STATIC_ASSERT(cond) \
-        _Static_assert((cond), "NEEDFUL_STATIC_ASSERT failed")
+        _Static_assert((cond), #cond)
 #else
     #define NEEDFUL_STATIC_ASSERT(cond) \
         NEEDFUL_STATIC_IGNORE(cond)  /* pre-C11 C version is noop [1] */
