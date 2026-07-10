@@ -49,6 +49,10 @@
 **                 (yes, it's standard C! `except` is a macro that expands
 **                 into a for() loop that can scope the declaration)
 **
+**   unreachable   Macro that gives the compiler hints ondivergent code paths,
+**                 but also encodes a return from the containing function,
+**                 which works polymophically across many return types.
+**
 **   cast()        A family of visible, hookable casts (cast, raw_cast,
 **                 m_cast, i_cast, ...) that replace C's invisible
 **                 parenthesized casts.  Can run debug-build validation
@@ -362,6 +366,55 @@ typedef enum {
 #endif
 
 
+/****[[ unreachable: INDICATE DIVERGENCE ]]***********************************
+**
+** Docs: https://needful.metaeducation.com/unreachable
+**
+** In Release mode (-O3/NDEBUG),the compiler aggressively deletes the dead
+** branch and optimizes switch jump tables. Triggers an assert in Debug mode.
+**
+** Uses `needful_nocast_0` and `needful_struct_0` to polymorphically satisfy
+** function return signatures without manual type boilerplate.
+**
+** (Note you can `#undef needful_builtin_unreachable` and redefine if needed.)
+**/
+
+#if defined(_MSC_VER)  /* MSVC __assume(0) even works with /Ob0 (no-inline) */
+    #define needful_builtin_unreachable  __assume(0)
+#elif defined(__GNUC__) || defined(__clang__)  /* GCC/Clang take the hint */
+    #define needful_builtin_unreachable  __builtin_unreachable()
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L
+    #include <stddef.h>  /* C23 has standard unreachable() in <stddef.h> */
+    #define needful_builtin_unreachable  unreachable()
+#else
+    #define needful_builtin_unreachable  ((void)0)  /* fall back to a no-op */
+#endif
+
+#define needful_unreachable  do { \
+    NEEDFUL_ASSERT(false); \
+    needful_builtin_unreachable; \
+    return needful_nocast_0; \
+  } while (0)
+
+#define needful_unreachable_void  do { \
+    NEEDFUL_ASSERT(false); \
+    needful_builtin_unreachable; \
+    return; \
+  } while (0)
+
+#define needful_unreachable_struct(T)  do { \
+    NEEDFUL_ASSERT(false); \
+    needful_builtin_unreachable; \
+    return (T)needful_struct_0; \
+  } while (0)
+
+  #define needful_unreachable_array  do { \
+    NEEDFUL_ASSERT(false); \
+    needful_builtin_unreachable; \
+    return needful_array_0; \
+  } while (0)
+
+
 /****[[ Result(T): MULTIPLEXED ERROR AND RETURN RESULT ]]*********************
 **
 ** Docs: https://needful.metaeducation.com/result
@@ -472,7 +525,7 @@ typedef enum {
 #define needful_panic(...) do { \
     Needful_Assert_Not_Failing(); \
     Needful_Panic_Abruptly(__VA_ARGS__); \
-    /* DEAD_END; */ \
+    needful_unreachable; \
 } while (0)
 
 #define needful_postfix_extract_result  /* no-op in C build */
@@ -491,7 +544,7 @@ typedef enum {
     _stmt_ needful_postfix_extract_result; \
     if (Needful_Get_Failure()) { \
         Needful_Panic_Abruptly(Needful_Test_And_Clear_Failure()); \
-        /* DEAD_END; */ \
+        needful_unreachable; \
     } NEEDFUL_NOOP  /* force require semicolon at callsite */
 
 #define needful_assume(_stmt_) \
@@ -529,11 +582,6 @@ const char* Needful_Test_And_Clear_Failure() {
 #define Needful_Set_Failure(error) \
    (g_needful_failure = error)
 
-#if __cplusplus
-[[noreturn]]  /* C++11 and higher */
-#else
-_Noreturn  /* C99 and higher */
-#endif
 void Needful_Panic_Abruptly(const char* error) {
     fprintf(stderr, "Panic: %s\n", error);
     fflush(stderr);
