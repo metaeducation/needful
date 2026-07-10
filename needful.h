@@ -594,6 +594,25 @@ void Needful_Panic_Abruptly(const char* error) {
 #endif  /* NEEDFUL_DECLARE_RESULT_HOOKS */
 
 
+/****[[ NULLPTR-REACTIVE MACROS ]]********************************************
+**
+** These macros react to the presence of a nullptr in the expression, and can
+** also deal with Option(T) expressions.
+**/
+
+#define needful_is_nullptr(_expr_) \
+    ((_expr_ needful_postfix_extract_option) == nullptr)
+
+#define needful_return_if_nullptr(_expr_) \
+    do { if (needful_is_nullptr(_expr_)) { return needful_none; } } while (0)
+
+#define needful_abort_if_nullptr(_expr_) \
+    do { if (needful_is_nullptr(_expr_)) { abort(); } } while (0)
+
+#define needful_tolerate_if_nullptr(_expr_) \
+    NEEDFUL_USED(needful_is_nullptr(_expr_))
+
+
 /****[[ Sink(T) / Init(T): INDICATE FUNCTION OUTPUT PARAMETERS ]]***********
 **
 ** Docs: https://needful.metaeducation.com/contra
@@ -1181,6 +1200,16 @@ void Needful_Panic_Abruptly(const char* error) {
     #define rescue /* (expr) */             needful_rescue
 #endif
 
+#if !defined(NEEDFUL_NULLPTR_SHORTHANDS)
+    #define NEEDFUL_NULLPTR_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#endif
+#if NEEDFUL_NULLPTR_SHORTHANDS
+    #define is_nullptr /* (_expr) */            needful_is_nullptr
+    #define return_if_nullptr /* (_expr_) */    needful_return_if_nullptr
+    #define abort_if_nullptr /* (_expr_) */     needful_abort_if_nullptr
+    #define tolerate_if_nullptr /* (_expr_) */  needful_tolerate_if_nullptr
+#endif
+
 #if !defined(NEEDFUL_CONTRA_SHORTHANDS)
     #define NEEDFUL_CONTRA_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
 #endif
@@ -1374,6 +1403,30 @@ void Needful_Panic_Abruptly(const char* error) {
     #if NEEDFUL_CAST_CALLS_HOOKS
         #error "NEEDFUL_CAST_CALLS_HOOKS requires NEEDFUL_CPP_ENHANCED"
     #endif
+#endif
+
+
+/*****************************************************************************
+**
+** You can't do things like return C's `NULL` for an Option(T*).  So nearly
+** any Needful client will want a nullptr definition for C.
+*/
+
+#if !defined(NEEDFUL_NULLPTR_SHIM)
+  #if defined(NEEDFUL_NULLPTR_SHORTHANDS)
+    #define NEEDFUL_NULLPTR_SHIM  NEEDFUL_NULLPTR_SHORTHANDS
+  #else
+    #define NEEDFUL_NULLPTR_SHIM  NEEDFUL_DEFINE_ALL_SHORTHANDS
+  #endif
+#endif
+#if NEEDFUL_NULLPTR_SHIM
+  #ifdef __cplusplus
+    #include <cstddef>  // defines `using nullptr_t = decltype(nullptr);`
+  #else
+    #if !defined(nullptr)
+      #define nullptr  (void*)0
+    #endif
+  #endif
 #endif
 
 
