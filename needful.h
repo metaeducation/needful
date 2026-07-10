@@ -225,27 +225,61 @@
 #endif
 
 
-/***[[ nocast_0: Generically Make 0 Of Any Type ]]****************************
+/***[[ nocast_0, struct_0, array_0: POLYMORPHIC ZERO-INITIALIZERS ]]**********
 **
 ** Docs: https://needful.metaeducation.com/nocast#needful_nocast_0
 **
-** Internal helper that produces a zero coercible to any type T.  Needed so
-** that user-defined wrapped types in Option(T) and Result(T) work.
+** `nocast_0` has the same meaning as `nocast 0` but just compiles faster.
+** It is required for macros used with Option(T) and Result(T) when compiled
+** in C++ environments w/o enabling the NEEDFUL_CPP_ENHANCED files.
+**
+** (These also have general utility in any code that targets both C and C++!)
 **/
 
 #if !defined(__cplusplus)
-    #define needful_nocast_0  0  /* may need warning disablement [A] */
+    #define needful_nocast_0    0    /* may need warning disablement [A] */
+    #define needful_struct_0  { 0 }  /* {} works only in C23 or later... */
+    #define needful_array_0   { 0 }
+
+    #define needful_struct_default  { 0 }  /* same as struct_0 in C */
 #else
   namespace needful {
-    struct Nocast0Struct {
+    struct Nocast0Struct {  /* same meaning as `nocast 0`, compiles faster */
         template<class To>
         constexpr operator To() const {
             return NocastConvert<To, int>::Do_Conversion(0);
         }
     };
+
+    struct Struct0Struct {  /* more safe than `#define needful_struct0 {}` */
+        template <typename T>
+        constexpr operator T() const {
+            static_assert(std::is_class<T>::value,
+                "struct_0 ONLY used on structs, not scalar types!");
+
+            static_assert(std::is_trivially_default_constructible<T>::value,
+                "Zero-init with {} only guaranteed in C-compatible structs!");
+
+            return T{};  /* guarantees recursive zero-initialization */
+        }
+    };
+
+    struct StructDefaultStruct {  /* more lenient, allows user constructors */
+        template <typename T>
+        constexpr operator T() const {
+            static_assert(std::is_class<T>::value,
+                "struct_default ONLY used on structs, not scalar types!");
+
+            return T{};  /* zero-initialization not guaranteed */
+        }
+    };
   }
 
     #define needful_nocast_0  needful::Nocast0Struct{}
+    #define needful_struct_0  needful::Struct0Struct{}
+    #define needful_array_0   {}  /* can't promise usage only w/arrays :-( */
+
+    #define needful_struct_default  needful::StructDefaultStruct{}
 #endif
 
 
