@@ -359,7 +359,9 @@ typedef enum {
 ** branch and optimizes switch jump tables. Triggers an assert in Debug mode.
 **
 ** Uses `needful_nocast_0` and `needful_struct_0` to polymorphically satisfy
-** function return signatures without manual type boilerplate.
+** function return signatures without manual type boilerplate.  Depending
+** on how much compatibility you need in C compilers, you could use the
+** needful_dead_end
 **
 ** (Note you can `#undef needful_builtin_unreachable` and redefine if needed.)
 **/
@@ -398,6 +400,35 @@ typedef enum {
     needful_builtin_unreachable; \
     return needful_array_0; \
   } while (0)
+
+
+/****[[ NORETURN shim ]]******************************************************
+**
+** The Result(T) macros use noreturn in Needful_Panic_Abruptly(), so we define
+** it here in a way that works in both C and C++.
+**
+** `needful_dead_end;` can dodge using return-type-correct unreachable forms
+** (e.g. needful_unreachable_struct(T)) in *MOST* C compilers.  But some will
+** still warn about "control reaches end of non-void function".  If you seek
+** maximum generality in C environments, use `needful_unreachable_*` macros.
+*/
+
+ #if !defined(__cplusplus)
+  #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+    #define NEEDFUL_NORETURN  _Noreturn  /* C99 and higher */
+  #else
+    #define NEEDFUL_NORETURN  /* no-op in C pre-C11 */
+  #endif
+#else
+    #define NEEDFUL_NORETURN  [[noreturn]]  /* C++11 and higher */
+#endif
+
+NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
+    NEEDFUL_ASSERT(false);
+    needful_builtin_unreachable;
+}
+
+#define needful_dead_end  needful_dead_end_inline()
 
 
 /****[[ Result(T): MULTIPLEXED ERROR AND RETURN RESULT ]]*********************
@@ -458,7 +489,6 @@ typedef enum {
 #define needful_panic(...) do { \
     Needful_Assert_Not_Failing(); \
     Needful_Panic_Abruptly(__VA_ARGS__); \
-    needful_unreachable; \
 } while (0)
 
 #define needful_postfix_extract_result  /* no-op in C build */
@@ -477,7 +507,7 @@ typedef enum {
     _stmt_ needful_postfix_extract_result; \
     if (Needful_Get_Failure()) { \
         Needful_Panic_Abruptly(Needful_Test_And_Clear_Failure()); \
-        needful_unreachable; \
+        needful_builtin_unreachable; \
     } NEEDFUL_NOOP  /* force require semicolon at callsite */
 
 #define needful_assert_not_failed(_stmt_) \
@@ -515,7 +545,7 @@ const char* Needful_Test_And_Clear_Failure() {
 #define Needful_Set_Failure(error) \
    (g_needful_failure = error)
 
-void Needful_Panic_Abruptly(const char* error) {
+NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
     fprintf(stderr, "Panic: %s\n", error);
     fflush(stderr);
     exit(1);
