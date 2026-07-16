@@ -36,9 +36,15 @@
 **                 null-check panic; `opt` skips it (unsafe).  C++ enforces
 **                 that Option(T) can't silently pass as a plain T.
 **
+**   Fallible(T)   Like Option(T) but "nodiscard": the compiler warns if you
+**                 ignore the falsey/zero state.
+**
 **   Result(T)     Multiplexed error + return value, like Rust's Result<T,E>.
-**                 `trap` auto-propagates, `except` catches with scoped
-**                 error variables, and `else` attaches naturally:
+**                 `return_if_failed` auto-propagates, `catch_if_failed`
+**                 catches with scoped error variables, and `else` attaches
+**                 naturally:
+**
+**                     #define except  needful_catch_if_failed
 **
 **                     int x = Risky_Call(arg) except (Error* e) {
 **                         printf("caught: %s\n", e->message);
@@ -444,7 +450,7 @@ typedef enum {
 
 #define NEEDFUL_RESULT_0  needful_nocast_0  /* unique type if C++ enhanced */
 
-#define needful_fail(...) \
+#define needful_make_failure(...) \
     (Needful_Assert_Not_Failing(), \
         Needful_Set_Failure(__VA_ARGS__), \
         NEEDFUL_RESULT_0)
@@ -457,7 +463,7 @@ typedef enum {
 
 #define needful_postfix_extract_result  /* no-op in C build */
 
-#define needful_trap(_stmt_) \
+#define needful_return_if_failed(_stmt_) \
     NEEDFUL_SCOPE_GUARD; \
     Needful_Assert_Not_Failing(); \
     _stmt_  needful_postfix_extract_result; \
@@ -465,7 +471,7 @@ typedef enum {
         return NEEDFUL_RESULT_0; \
     } NEEDFUL_NOOP  /* force require semicolon at callsite */
 
-#define needful_require(_stmt_) \
+#define needful_abort_if_failed(_stmt_) \
     NEEDFUL_SCOPE_GUARD; \
     Needful_Assert_Not_Failing(); \
     _stmt_ needful_postfix_extract_result; \
@@ -474,19 +480,19 @@ typedef enum {
         needful_unreachable; \
     } NEEDFUL_NOOP  /* force require semicolon at callsite */
 
-#define needful_assume(_stmt_) \
+#define needful_assert_not_failed(_stmt_) \
     NEEDFUL_SCOPE_GUARD; \
     Needful_Assert_Not_Failing(); \
     _stmt_ needful_postfix_extract_result; \
     Needful_Assert_Not_Failing()
 
-#define needful_except(_decl_) \
+#define needful_catch_if_failed(_decl_) \
     /* _stmt_ */ needful_postfix_extract_result; /* v-- see docs RE:_once */ \
     for (_decl_ = Needful_Get_Failure(), *_once = nullptr; !_once; ++_once) \
       if (Needful_Test_And_Clear_Failure()) /* allow else clause to attach */
         /* {body} implicitly picked up after macro by for, decl is scoped */
 
-#define needful_rescue(_expr_) \
+#define needful_extract_failure(_expr_) \
     (Needful_Assert_Not_Failing(), _expr_ needful_postfix_extract_result, \
         Needful_Test_And_Clear_Failure())
 
@@ -965,19 +971,16 @@ void Needful_Panic_Abruptly(const char* error) {
     #define NEEDFUL_RESULT_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
 #endif
 #if NEEDFUL_RESULT_SHORTHANDS
-    #define Result /* (T) */        NeedfulResult
+    #define Result /* (T) */             NeedfulResult
 
-    #define fail /* (...) */        needful_fail
-    /* #define failed               needful_fail("generic failure");  [2] */
-    #define panic /* (...) */       needful_panic
+    #define make_failure /* (...) */     needful_make_failure
+    #define panic /* (...) */            needful_panic
 
-    #define trap /* (expr) */               needful_trap
-    #define require /* (expr) */            needful_require
-    #define except /* (decl) { code } */    needful_except
-
-    #define assume /* (expr) */             needful_assume
-
-    #define rescue /* (expr) */             needful_rescue
+    #define return_if_failed /* (stmt) */    needful_return_if_failed
+    #define abort_if_failed /* (stmt) */     needful_abort_if_failed
+    #define assert_not_failed /* (stmt) */   needful_assert_not_failed
+    #define catch_if_failed /* (decl) {} */  needful_catch_if_failed
+    #define extract_failure /* (expr) */     needful_extract_failure
 #endif
 
 #if !defined(NEEDFUL_NULLPTR_SHORTHANDS)
