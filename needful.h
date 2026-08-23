@@ -394,12 +394,53 @@ typedef enum {
 **    NEEDFUL_NODISCARD in needful-enhanced/needful-asserts.hpp.
 */
 
+/****[[ NEEDFUL_PRECPP17_NODISCARD: MUST-USE BELOW C++17 ]]*******************
+**
+** [[nodiscard]] is a C++17 attribute, and it is the only spelling that works
+** on a *class* -- which is the position Needful needs, since Result(T) and
+** Fallible(T) are wrapper classes in enhanced builds and the GNU attribute is
+** simply ignored there.  So below C++17 the checked build enforces the type
+** separation but not the must-use property...a checked C++11 build is, on
+** that one axis, weaker than a plain C build under GCC.
+**
+** Compilers are more willing than the standard requires.  Measured: MSVC
+** accepts [[nodiscard]] at /std:c++14 on both functions and classes, and says
+** nothing about it even at /Wall.  GCC and Clang accept it below C++17 too,
+** but do complain under -Wpedantic (-Wc++17-extensions).
+**
+** Defining NEEDFUL_PRECPP17_NODISCARD=1 takes them up on it, and silences
+** that pedantic complaint so a -Wpedantic -Werror build stays usable.  It is
+** opt-in and applies to every compiler at once, rather than being switched on
+** silently wherever it happens to work: a configuration where MSVC rejects
+** code that GCC accepts is exactly the divergence Needful exists to avoid.
+**
+** The suppression is file-scope and unpopped, like the -Wint-conversion one
+** in note [A].  It has to be: the attribute is emitted at each call site
+** rather than here, and a pragma cannot be carried inside the macro because
+** pragmas may not appear in the middle of a declaration.
+*/
+
+#if !defined(NEEDFUL_PRECPP17_NODISCARD)
+    #define NEEDFUL_PRECPP17_NODISCARD  0
+#endif
+
+#if NEEDFUL_PRECPP17_NODISCARD && defined(__cplusplus) \
+        && __cplusplus < 201703L && !defined(_MSC_VER)  /* MSVC is quiet */
+  #if defined(__clang__)
+    #pragma clang diagnostic ignored "-Wc++17-extensions"
+  #elif defined(__GNUC__)
+    #pragma GCC diagnostic ignored "-Wc++17-extensions"
+  #endif
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
     #define NEEDFUL_MUSTUSE  __attribute__((warn_unused_result))  /* [1] */
 #elif defined(__cplusplus) && __cplusplus >= 201703L
     #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* `static` is fine in C++ */
 #elif defined(_MSC_VER) && defined(_MSVC_LANG) && _MSVC_LANG >= 201703L
     #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* MSVC w/o /Zc:__cplusplus [2] */
+#elif NEEDFUL_PRECPP17_NODISCARD && defined(__cplusplus)
+    #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* opt-in, C++11/14 */
 #elif defined(NEEDFUL_FALLIBLE_C23_MUSTUSE) && NEEDFUL_FALLIBLE_C23_MUSTUSE
     #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* opt-in: breaks `static` [1] */
 #else
