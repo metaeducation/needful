@@ -1333,6 +1333,9 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
     #include "needful-enhanced/cplusplus-needfuls.hpp"
 #else
+    #if NEEDFUL_NEED_USES_WRAPPER  /* was missing; the others all had one */
+        #error "NEEDFUL_NEED_USES_WRAPPER requires NEEDFUL_CPP_ENHANCED"
+    #endif
     #if NEEDFUL_OPTION_USES_WRAPPER
         #error "NEEDFUL_OPTION_USES_WRAPPER requires NEEDFUL_CPP_ENHANCED"
     #endif
