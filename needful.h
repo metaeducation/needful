@@ -105,6 +105,10 @@
 **    the platform `assert()`.  Projects that need debugger-friendlier
 **    behavior can define `NEEDFUL_ASSERT(expr)` before including needful.h,
 **    or include their own assert replacement header first.
+**
+**    Likewise `abort_if_nullptr()` routes through `NEEDFUL_ABORT()`, which
+**    defaults to `<stdlib.h>`'s `abort()`.  Define either macro beforehand and
+**    Needful will not include the corresponding standard header at all.
 */
 
 #ifndef NEEDFUL_H_INCLUDED  /* "include guard" allows multiple #includes */
@@ -119,6 +123,30 @@
 #if !defined(NEEDFUL_ASSERT)  /* See [B] above */
     #include <assert.h>
     #define NEEDFUL_ASSERT(expr)  assert(expr)
+#endif
+
+#if !defined(NEEDFUL_ABORT)  /* See [B] above */
+    #include <stdlib.h>
+    #define NEEDFUL_ABORT()  abort()
+#endif
+
+
+/****[[ NEEDFUL_NULLPTR: INTERNAL SPELLING OF THE NULL POINTER ]]*************
+**
+** Needful's own machinery needs a null pointer constant, and it needs one
+** whether or not you asked for the cosmetic `nullptr` shim at the bottom of
+** this file.  (Turning on only NEEDFUL_RESULT_SHORTHANDS used to leave
+** catch_if_failed() referring to an undeclared `nullptr` in C.)
+**
+** This is one of the few places an `#ifdef __cplusplus` is unavoidable: C++
+** will not implicitly convert `(void*)0` to an arbitrary `T*`, so the real
+** keyword is required there.
+*/
+
+#if !defined(__cplusplus)
+    #define NEEDFUL_NULLPTR  ((void*)0)
+#else
+    #define NEEDFUL_NULLPTR  nullptr
 #endif
 
 
@@ -358,11 +386,10 @@ typedef enum {
     return (T)needful_struct_0; \
   } while (0)
 
-  #define needful_unreachable_array  do { \
-    NEEDFUL_ASSERT(!"unreachable"); \
-    needful_builtin_unreachable; \
-    return needful_array_0; \
-  } while (0)
+/* (There is deliberately no `needful_unreachable_array`.  C cannot return an
+   array type at all, so no C caller could exist--and the C expansion
+   `return { 0 };` was a syntax error.  Aggregates go through
+   needful_unreachable_struct(T), which forms a C99 compound literal.) */
 
 
 /****[[ NORETURN shim ]]******************************************************
@@ -448,7 +475,8 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
 
 #define needful_catch_if_failed(_decl_) \
     /* _stmt_ */ needful_postfix_extract_result; /* v-- see docs RE:_once */ \
-    for (_decl_ = Needful_Get_Failure(), *_once = nullptr; !_once; ++_once) \
+    for (_decl_ = Needful_Get_Failure(), *_once = NEEDFUL_NULLPTR; \
+            !_once; ++_once) \
       if (Needful_Test_And_Clear_Failure()) /* allow else clause to attach */
         /* {body} implicitly picked up after macro by for, decl is scoped */
 
@@ -494,13 +522,13 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 **/
 
 #define needful_is_nullptr(_expr_) \
-    ((_expr_ needful_postfix_extract_option) == nullptr)
+    ((_expr_ needful_postfix_extract_option) == NEEDFUL_NULLPTR)
 
 #define needful_return_if_nullptr(_expr_) \
     do { if (needful_is_nullptr(_expr_)) { return needful_none; } } while (0)
 
 #define needful_abort_if_nullptr(_expr_) \
-    do { if (needful_is_nullptr(_expr_)) { abort(); } } while (0)
+    do { if (needful_is_nullptr(_expr_)) { NEEDFUL_ABORT(); } } while (0)
 
 #define needful_tolerate_if_nullptr(_expr_) \
     NEEDFUL_USED(needful_is_nullptr(_expr_))
@@ -557,6 +585,10 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
 #define ENABLE_IF_EXACT_ARG_TYPE(...)
 #define DISABLE_IF_EXACT_ARG_TYPE(...)
+
+#define ENABLE_IF_ARG_CONVERTIBLE_TO(...)   /* C++ override in needful-known */
+#define DISABLE_IF_ARG_CONVERTIBLE_TO(...)  /* C++ override in needful-known */
+
 #define ENABLEABLE(T, name)  T name
 
 
@@ -694,7 +726,7 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
     #define Assert_Corrupted_If_Needful(var) do { \
         if (*(unsigned char*)(&(var)) != 0xBD)  /* cheap check vs. loop */ \
-            NEEDFUL_ASSERT("Expected variable to be corrupt and it was not"); \
+            NEEDFUL_ASSERT(!"Expected variable to be corrupt and it was not"); \
     } while (0)
 #endif
 
