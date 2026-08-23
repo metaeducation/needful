@@ -34,13 +34,14 @@
 **                 null-check panic; `opt` skips it (unsafe).  C++ enforces
 **                 that Option(T) can't silently pass as a plain T.
 **
-**   Fallible(T)   Like Option(T) but "nodiscard": the compiler warns if you
-**                 ignore the falsey/zero state.
+**   Fallible(T)   Like Option(T) but "nodiscard": you can't drop it on the
+**                 floor.  Discharge it with `return_if_none`, `abort_if_none`,
+**                 `assert_not_none` or `tolerate_none`: say which you meant.
 **
 **   Result(T)     Multiplexed error + return value, like Rust's Result<T,E>.
 **                 `return_if_failed` auto-propagates; `catch_if_failed`
 **                 supports scoped catch variables (and works with `else`).
-**                 (standard C: `except` expands to a scoped `for` pattern)
+**                 (standard C: it expands to a scoped `for` pattern)
 **
 **   unreachable   Macro that gives the compiler hints on divergent code paths,
 **                 but also encodes a return from the containing function,
@@ -91,10 +92,11 @@
 ****[[ NOTES ]]***************************************************************
 **
 ** A. Needful globally disables `-Wint-conversion` in C mode.  This is needed
-**    because `fail(...)` and `none` expand to comma expressions, and the
-**    comma operator strips the "null pointer constant" status of 0, causing
-**    GCC/Clang to warn on every `return fail(...)` in pointer-returning
-**    functions.  The C++ enhanced build catches any real type mistakes.
+**    because `make_failure(...)` and `none` expand to comma expressions, and
+**    the comma operator strips the "null pointer constant" status of 0,
+**    causing GCC/Clang to warn on every `return make_failure(...)` in a
+**    pointer-returning function.  The C++ enhanced build catches real
+**    type mistakes anyway.
 **
 **    See: https://needful.metaeducation.com/faq#int-conversion-warning
 **
@@ -106,7 +108,7 @@
 **    behavior can define `NEEDFUL_ASSERT(expr)` before including needful.h,
 **    or include their own assert replacement header first.
 **
-**    Likewise `abort_if_nullptr()` routes through `NEEDFUL_ABORT()`, which
+**    Likewise `abort_if_none()` routes through `NEEDFUL_ABORT()`, which
 **    defaults to `<stdlib.h>`'s `abort()`.  Define either macro beforehand and
 **    Needful will not include the corresponding standard header at all.
 */
@@ -272,6 +274,34 @@
             return T{};  /* zero-initialization not guaranteed */
         }
     };
+
+    /* Comparison against nocast_0, which is how `none` is spelled when
+    ** building as C++ *without* the enhanced files.  Needed so that
+    ** `x == needful_none` means the same thing in all three build modes:
+    ** in C it is a plain `x == 0`, and under enhancement Option(T) supplies
+    ** its own NoneStruct operators.  Without these, the middle mode would
+    ** compare fine for pointers (via the template conversion operator above)
+    ** but reject enums...the worst of the three outcomes, since it would look
+    ** correct until someone declared a Fallible(SomeEnum).
+    **
+    ** The trailing return type is the constraint: if `!v` is not valid for T,
+    ** substitution fails and the overload simply drops out.
+    */
+    template<class T>
+    constexpr auto operator==(const T& v, Nocast0Struct) -> decltype(! v)
+      { return ! v; }
+
+    template<class T>
+    constexpr auto operator==(Nocast0Struct, const T& v) -> decltype(! v)
+      { return ! v; }
+
+    template<class T>
+    constexpr auto operator!=(const T& v, Nocast0Struct) -> decltype(!! v)
+      { return !! v; }
+
+    template<class T>
+    constexpr auto operator!=(Nocast0Struct, const T& v) -> decltype(!! v)
+      { return !! v; }
   }
 
     #define needful_nocast_0  needful::Nocast0Struct{}
@@ -309,14 +339,76 @@ typedef enum {
 
 /****[[ Fallible(T): LIKE Option(T) BUT RESULT MUST BE USED ]]****************
 **
+** Docs: https://needful.metaeducation.com/fallible
+**
 ** Needful's Result(T) uses thread-global variables to multiplex an error on
 ** top of an arbitrary return value.  Fallible(T) does something simpler: it
 ** just lets you mark a return value as Fallible(T) to be a [[nodiscard]]
 ** version of an Option(T) (like Rust's #[must_use]).
-**/
+**
+** The none-reactive macros further below (return_if_none, abort_if_none, ...)
+** are how you discharge that obligation as a statement.  `infallible` is the
+** expression-position form, for when you have inside knowledge that this
+** particular call cannot come back disengaged:
+**
+**     char* buf = infallible Try_Allocate(size);
+**
+** ...which asserts in debug builds and costs nothing in release.
+**
+** (Plain `unwrap` works on a Fallible(T) too, since Fallible(T) derives from
+** Option(T) in enhanced builds.  `infallible` is preferred at Fallible call
+** sites because it names the assumption being made.)
+*/
 
-#define NeedfulFallible(T)  T
-#define needful_unwrap_fallible  /* no-op in C build */
+/* Fallible(T) is for RETURN TYPES.  FallibleVar(T) is the same type for every
+** other position -- locals, parameters, struct members, typedefs.
+**
+** The split exists because of how the must-use annotation behaves.  Measured
+** across C and C++: applied anywhere but a function's return type it is
+** diagnosed (a warning for variables, parameters and members, which the tests
+** build as an error; a hard error for typedefs and casts).  That is a feature,
+** not an obstacle -- it means Fallible(T) polices its own position for free,
+** so a value that must be checked cannot be quietly parked in a struct field
+** where nothing will ever check it.  But it also means a legitimate local or
+** parameter needs a spelling that omits the annotation, which is this one.
+**
+** The two are the SAME TYPE.  They differ only in which declaration positions
+** they are legal in, and only in C:  under C++ enhancement both are the same
+** [[nodiscard]] wrapper class, where the attribute rides on the type instead
+** of the declaration and no position is special.
+**
+** 1. The GNU spelling is preferred over [[nodiscard]] even where both exist,
+**    because __attribute__ may appear anywhere among the declaration
+**    specifiers while [[nodiscard]] must lead the declaration.  That is the
+**    difference between `static Fallible(int*) helper(void)` working and not:
+**    with the C23 attribute it is a syntax error, and there is no reordering
+**    that rescues it (`Fallible(int*) static ...` fails too).  So the C23-only
+**    path stays opt-in -- a hard error on `static` is too rude a surprise for
+**    a compiler upgrade to spring on someone.
+*/
+
+/* 2. MSVC reports __cplusplus as 199711L unless you pass /Zc:__cplusplus, so
+**    testing it alone silently skips this branch on the compiler that most
+**    needs it (GCC and Clang are already served above).  _MSVC_LANG carries
+**    the real language level regardless of that switch.  Same pattern as
+**    NEEDFUL_NODISCARD in needful-enhanced/needful-asserts.hpp.
+*/
+
+#if defined(__GNUC__) || defined(__clang__)
+    #define NEEDFUL_MUSTUSE  __attribute__((warn_unused_result))  /* [1] */
+#elif defined(__cplusplus) && __cplusplus >= 201703L
+    #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* `static` is fine in C++ */
+#elif defined(_MSC_VER) && defined(_MSVC_LANG) && _MSVC_LANG >= 201703L
+    #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* MSVC w/o /Zc:__cplusplus [2] */
+#elif defined(NEEDFUL_FALLIBLE_C23_MUSTUSE) && NEEDFUL_FALLIBLE_C23_MUSTUSE
+    #define NEEDFUL_MUSTUSE  [[nodiscard]]  /* opt-in: breaks `static` [1] */
+#else
+    #define NEEDFUL_MUSTUSE  /* no spelling available in this configuration */
+#endif
+
+#define NeedfulFallible(T)     NEEDFUL_MUSTUSE T  /* return position only */
+#define NeedfulFallibleVar(T)  T  /* locals, parameters, members, typedefs */
+
 #define needful_infallible  /* no-op in C build */
 
 
@@ -429,9 +521,17 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
 ** handling errors in a style similar to Rust's `Result<T, E>`, without
 ** requiring exceptions or setjmp/longjmp in C++ builds.
 **
-** Catch syntax remains plain C: `except` uses a scoped `for` pattern so
-** catch variables can be introduced in a local scope and still pair with
+** Catch syntax remains plain C: catch_if_failed() uses a scoped `for` pattern
+** so catch variables can be introduced in a local scope and still pair with
 ** an `else` clause naturally.  Full usage examples are in the docs.
+**
+** 1. panic_if_failed() is deliberately NOT named abort_if_failed(), even
+**    though that would read as a tidier match for abort_if_none() over in the
+**    none-reactive family.  The two genuinely differ: a failure carries an
+**    error payload, so this one hands it to Needful_Panic_Abruptly() to be
+**    reported before the process ends.  A disengaged Option has nothing to
+**    report, so abort_if_none() can only call NEEDFUL_ABORT().  Giving both
+**    an `abort_` prefix would promise a shared exit path that does not exist.
 */
 
 #define NeedfulResult(T)  T
@@ -458,7 +558,7 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
         return NEEDFUL_RESULT_0; \
     } NEEDFUL_NOOP  /* force require semicolon at callsite */
 
-#define needful_abort_if_failed(_stmt_) \
+#define needful_panic_if_failed(_stmt_) /* panics, does not abort() [1] */ \
     NEEDFUL_SCOPE_GUARD; \
     Needful_Assert_Not_Failing(); \
     _stmt_ needful_postfix_extract_result; \
@@ -515,23 +615,70 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 #endif  /* NEEDFUL_DECLARE_RESULT_HOOKS */
 
 
-/****[[ NULLPTR-REACTIVE MACROS ]]********************************************
+/****[[ NONE-REACTIVE MACROS: THE Fallible(T) DISCHARGE VOCABULARY ]]*********
 **
-** These macros react to the presence of a nullptr in the expression, and can
-** also deal with Option(T) expressions.
-**/
+** Docs: https://needful.metaeducation.com/fallible
+**
+** These macros react to an expression coming back in its disengaged state.
+** They are how you satisfy a Fallible(T)'s must-use obligation, and they work
+** on a plain Option(T) or a bare pointer just as well.
+**
+** They mirror the Result(T) vocabulary one-for-one:
+**
+**     propagate it        return_if_failed     return_if_none
+**     die on it           panic_if_failed      abort_if_none
+**     assert impossible   assert_not_failed    assert_not_none
+**     ignore it           extract_failure      tolerate_none
+**
+** What they do NOT do is interoperate.  return_if_failed tests the global
+** failure state, while return_if_none tests the value itself...so reaching
+** for the wrong one silently does nothing.  The two families cannot be
+** merged into one; the reasons are worth reading before proposing it:
+**
+**   https://needful.metaeducation.com/faq#result-fallible-unification
+**
+** 1. The test is a comparison against `none` rather than against a null
+**    pointer.  Option(T) and Fallible(T) require only that T be explicitly
+**    convertible to bool, so an Option(SomeEnum) is perfectly ordinary...and
+**    comparing an enum to `(void*)0` is a constraint violation in C and an
+**    error in C++.  Worse, needful.h suppresses -Wint-conversion in C builds
+**    (see [A] above), so on GCC and Clang that mistake would compile silently
+**    as C and fail only under C++ enhancement, which is exactly the kind of
+**    C/C++ divergence Needful exists to prevent.
+**
+**    `none` is plain `0` in C.  In C++ it is a struct, which is why both the
+**    nocast_0 operators above and Option(T)'s NoneStruct operators exist:
+**    so this one spelling means the same thing in all three build modes.
+**
+** 2. The doubled parentheses suppress "suggest parentheses around assignment
+**    used as truth value", since callers pass assignments here by design.
+*/
 
-#define needful_is_nullptr(_expr_) \
-    ((_expr_ needful_postfix_extract_option) == NEEDFUL_NULLPTR)
+#define needful_is_none(_expr_)  /* compares to `none`, not to null [1] */ \
+    (((_expr_ needful_postfix_extract_option)) == needful_none)  /* [2] */
 
-#define needful_return_if_nullptr(_expr_) \
-    do { if (needful_is_nullptr(_expr_)) { return needful_none; } } while (0)
+#define needful_return_if_none(_expr_) \
+    do { if (needful_is_none(_expr_)) { return needful_none; } } while (0)
 
-#define needful_abort_if_nullptr(_expr_) \
-    do { if (needful_is_nullptr(_expr_)) { NEEDFUL_ABORT(); } } while (0)
+#define needful_abort_if_none(_expr_) \
+    do { if (needful_is_none(_expr_)) { NEEDFUL_ABORT(); } } while (0)
 
-#define needful_tolerate_if_nullptr(_expr_) \
-    NEEDFUL_USED(needful_is_nullptr(_expr_))
+#define needful_assert_not_none(_expr_) do { /* _expr_ always runs [3] */ \
+    int _needful_was_none_ = needful_is_none(_expr_) ? 1 : 0; \
+    NEEDFUL_ASSERT(! _needful_was_none_); \
+    NEEDFUL_UNUSED(_needful_was_none_); \
+} while (0)
+
+#define needful_tolerate_none(_expr_) \
+    NEEDFUL_USED(needful_is_none(_expr_))
+
+/*
+** 3. assert_not_none() must not put _expr_ inside NEEDFUL_ASSERT() directly.
+**    Assertions compile away under NDEBUG, which would silently drop the
+**    assignment callers write inside the macro.  Evaluating into a local
+**    first keeps the side effect in release builds, matching the way that
+**    assert_not_failed() runs its statement before asserting.
+*/
 
 
 /****[[ Sink(T) / Init(T): INDICATE FUNCTION OUTPUT PARAMETERS ]]***********
@@ -935,20 +1082,25 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
     #define panic /* (...) */            needful_panic
 
     #define return_if_failed /* (stmt) */    needful_return_if_failed
-    #define abort_if_failed /* (stmt) */     needful_abort_if_failed
+    #define panic_if_failed /* (stmt) */     needful_panic_if_failed
     #define assert_not_failed /* (stmt) */   needful_assert_not_failed
     #define catch_if_failed /* (decl) {} */  needful_catch_if_failed
     #define extract_failure /* (expr) */     needful_extract_failure
 #endif
 
-#if !defined(NEEDFUL_NULLPTR_SHORTHANDS)
-    #define NEEDFUL_NULLPTR_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
+#if !defined(NEEDFUL_FALLIBLE_SHORTHANDS)
+    #define NEEDFUL_FALLIBLE_SHORTHANDS  NEEDFUL_DEFINE_ALL_SHORTHANDS
 #endif
-#if NEEDFUL_NULLPTR_SHORTHANDS
-    #define is_nullptr /* (_expr) */            needful_is_nullptr
-    #define return_if_nullptr /* (_expr_) */    needful_return_if_nullptr
-    #define abort_if_nullptr /* (_expr_) */     needful_abort_if_nullptr
-    #define tolerate_if_nullptr /* (_expr_) */  needful_tolerate_if_nullptr
+#if NEEDFUL_FALLIBLE_SHORTHANDS
+    #define Fallible /* (T) */              NeedfulFallible
+    #define FallibleVar /* (T) */           NeedfulFallibleVar
+    #define infallible /* ... */            needful_infallible
+
+    #define is_none /* (expr) */            needful_is_none
+    #define return_if_none /* (expr) */     needful_return_if_none
+    #define abort_if_none /* (expr) */      needful_abort_if_none
+    #define assert_not_none /* (expr) */    needful_assert_not_none
+    #define tolerate_none /* (expr) */      needful_tolerate_none
 #endif
 
 #if !defined(NEEDFUL_CONTRA_SHORTHANDS)
@@ -1140,12 +1292,14 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 ** any Needful client will want a nullptr definition for C.
 */
 
+/* This used to default from a NEEDFUL_NULLPTR_SHORTHANDS group, back when the
+** none-reactive macros were spelled *_if_nullptr and lived under that name.
+** They test against `none` now and the group is NEEDFUL_FALLIBLE_SHORTHANDS,
+** so that coupling no longer means anything: whether you want a `nullptr` in
+** C is independent of whether you want the Fallible(T) vocabulary.
+*/
 #if !defined(NEEDFUL_NULLPTR_SHIM)
-  #if defined(NEEDFUL_NULLPTR_SHORTHANDS)
-    #define NEEDFUL_NULLPTR_SHIM  NEEDFUL_NULLPTR_SHORTHANDS
-  #else
     #define NEEDFUL_NULLPTR_SHIM  NEEDFUL_DEFINE_ALL_SHORTHANDS
-  #endif
 #endif
 #if NEEDFUL_NULLPTR_SHIM
   #ifdef __cplusplus
