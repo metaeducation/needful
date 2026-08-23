@@ -16,14 +16,12 @@
 ** Needful is a single-header library that adds typed options, typed results,
 ** visible casts, and compile-time intent checks to C.
 **
-** In plain C it stays a no-op; in enhanced builds it catches real mistakes.
-**
 ** The key trick: every Needful construct compiles as a transparent macro
 ** in C.  But add the enhanced support files, `#define NEEDFUL_CPP_ENHANCED 1`,
 ** and rebuild as C++.  The same macros light up with compile-time enforcement
 ** that catches real bugs.
 **
-** Your C code stays C.  The C++ compiler just *checks* it harder.
+** Your C code stays C.  But using a C++ compiler just *checks* it harder.
 **
 ****[[ WHAT YOU GET ]]*********************************************************
 **
@@ -40,29 +38,17 @@
 **                 ignore the falsey/zero state.
 **
 **   Result(T)     Multiplexed error + return value, like Rust's Result<T,E>.
-**                 `return_if_failed` auto-propagates, `catch_if_failed`
-**                 catches with scoped error variables, and `else` attaches
-**                 naturally:
+**                 `return_if_failed` auto-propagates; `catch_if_failed`
+**                 supports scoped catch variables (and works with `else`).
+**                 (standard C: `except` expands to a scoped `for` pattern)
 **
-**                     #define except  needful_catch_if_failed
-**
-**                     int x = Risky_Call(arg) except (Error* e) {
-**                         printf("caught: %s\n", e->message);
-**                     } else {
-**                         printf("success!\n");
-**                     }
-**
-**                 (yes, it's standard C! `except` is a macro that expands
-**                 into a for() loop that can scope the declaration)
-**
-**   unreachable   Macro that gives the compiler hints ondivergent code paths,
+**   unreachable   Macro that gives the compiler hints on divergent code paths,
 **                 but also encodes a return from the containing function,
 **                 which works polymophically across many return types.
 **
 **   cast()        A family of visible, hookable casts (cast, raw_cast,
 **                 m_cast, i_cast, ...) that replace C's invisible
-**                 parenthesized casts.  Can run debug-build validation
-**                 hooks--even on raw pointer casts.
+**                 parenthesized casts, with optional debug validation hooks.
 **
 **   Sink(T)       Marks output parameters with contravariant type safety.
 **   Init(T)       Contravariant output + corruption scrambling in debug.
@@ -77,22 +63,23 @@
 ****[[ GETTING STARTED ]]*****************************************************
 **
 **   1. Drop `needful.h` into your project.  #include it.  Done.
-**      That is the default mode: single-header, no companion files, no build
-**      system changes.
+**      Default mode is single-header: no companion files or build changes.
 **
-**   2. If you want the extra C++ checks, put needful-enhanced/ next to
+**   2. Optional: enable shorthand aliases (`xxx`) for `needful_xxx` names.
+**      `#define NEEDFUL_DEFINE_ALL_SHORTHANDS 1` for all aliases, or
+**      set specific `NEEDFUL_*_SHORTHANDS` flags for selected groups.
+**      Define these before including `needful.h`.
+**
+**   3. If you want the extra C++ checks, put needful-enhanced/ next to
 **      needful.h.  That companion tree can stay out of your main repository
-**      if you prefer--for example by cloning it locally and listing it in
-**      .gitignore:
+**      if you prefer (e.g. local clone + .gitignore):
 **
 **      https://github.com/metaeducation/needful-enhanced
 **
-**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11 (or even
-**      better, C++17!)  Same source, stricter checking: type mismatches
-**      become compile errors.
+**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11+.
+**      Same source, stricter checking.
 **
-**   3. You can run both build modes in CI: the C build for production,
-**      the C++ build to catch bugs.  No code changes needed between them.
+**   4. CI can run both modes: C for production, C++ for stronger checks.
 **
 ** The C definitions in this file are intentionally written out in full so
 ** you can see how simple they are.  (Conditional code on `#ifdef __cplusplus`
@@ -141,15 +128,7 @@
 **
 ** Need(T) marks a pointer or value as guaranteed non-null/non-zero.  The
 ** core benefit: in NEEDFUL_CPP_ENHANCED builds, testing a Need(T) in a
-** boolean context is a compile error.  Null-checking something known
-** non-null reveals a misunderstanding in the surrounding code:
-**
-**    int value = 1020;
-**    Need(int*) ptr = &value;
-**
-**    printf("%d\n", *ptr);  // safe to dereference, can't be null
-**
-**    if (ptr) { ... }  // ** COMPILE ERROR in C++ builds!
+** boolean context is a compile error.
 */
 
 #define NeedfulNeed(T)  T
@@ -170,7 +149,7 @@
 ** implicitly trigger the correct static_cast (or C-cast for deep pointers).
 **/
 
-#if !defined(__cplusplus)  // need C++ mechanics even w/o NEEDFUL_CPP_ENHANCED
+#if !defined(__cplusplus)  /* need C++ variant even w/o NEEDFUL_CPP_ENHANCED */
     #define needful_nocast
 #else
     #include <type_traits>
@@ -179,8 +158,8 @@
     struct NocastMaker {};
 
     template<
-        class To, class From,  // `From` pass-by-value, (no remove_reference)
-        bool IntToPtr =  /* only one case needs special handling [1] */
+        class To, class From,  /* `From` pass-by-value (no remove_reference) */
+        bool IntToPtr =  /* only one case needs special handling */
             std::is_pointer<To>::value && std::is_integral<From>::value
     >
     struct NocastConvert {
@@ -279,27 +258,11 @@
 **
 ** Docs: https://needful.metaeducation.com/option
 **
-** Option() provides targeted functionality in the vein of Rust's `Option`
-** and C++'s `std::optional`:
+** Option() is a lightweight maybe-value in the vein of Rust `Option` or
+** C++ `std::optional`, using T's falsey state as disengaged.
 **
-**     Option(char*) abc = "abc";
-**     Option(char*) xxx = none;  // nullptr is none synonym if pointer type
-**
-**     if (abc)
-**        printf("abc is truthy, so `unwrap abc` is safe!\n")
-**
-**     if (! xxx)
-**        printf("XXX is falsey, so don't `unwrap xxx`...\n")
-**
-**     char* s1 = abc;                  // ! compile-time error !
-**     Option(char*) s2 = abc;          // legal
-**
-**     char* s3 = unwrap xxx;           // ! runtime error (if debug build) !
-**     char* s4 = opt xxx;              // gets nullptr out (no null-check)
-**
-** It leverages the natural boolean coercibility of the contained type.  So
-** you can use it with things like pointers, integers or enums...anywhere the
-** C build can treat 0 as a "falsey" state.
+** In enhanced C++ builds, Option(T) does not silently coerce to T; use
+** `unwrap` (checked) or `opt` (unchecked).
 */
 
 typedef enum {
@@ -361,7 +324,7 @@ typedef enum {
 ** Uses `needful_nocast_0` and `needful_struct_0` to polymorphically satisfy
 ** function return signatures without manual type boilerplate.  Depending
 ** on how much compatibility you need in C compilers, you could use the
-** needful_dead_end
+** needful_dead_end and not worry about the return type.
 **
 ** (Note you can `#undef needful_builtin_unreachable` and redefine if needed.)
 **/
@@ -436,45 +399,12 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
 ** Docs: https://needful.metaeducation.com/result
 **
 ** These macros provide a C/C++-compatible mechanism for propagating and
-** handling errors in a style similar to Rust's `Result<T, E>`, all without
+** handling errors in a style similar to Rust's `Result<T, E>`, without
 ** requiring exceptions or setjmp/longjmp in C++ builds.
 **
-** You can write code like this:
-**
-**     Result(int) Some_Func(int x) {
-**         if (x < 304)
-**             return fail ("the value is too small");
-**         return x + 20;  // ^-- sets thread-local state
-**     }
-**
-**     Result(int) Other_Func(void) {
-**         trap (
-**           int y = Some_Func(1000)
-**         );
-**         assert(y == 1020);
-**
-**         trap (
-**           int z = Some_Func(10)  // embedded `return` bubbles the failure
-**         );
-**         printf("this would never be reached...");
-**
-**         return z;
-**     }
-**
-** Also of particular note is the syntax for catching "exceptional" cases
-** (though again, not C++ exceptions and not longjmps).  This syntax looks
-** particularly natural due to clever use of a `for` loop to get a scope:
-**
-**     int result = Some_Func(10 + 20) except (Error* e) {
-**         printf("caught an error: %s\n", e->message);  // e scoped to block
-**     }
-**     else {
-**         printf("didn't have an error, and else clause works!!");
-**     }
-**
-** So the macros enable a shockingly literate style of programming that is
-** portable between C and C++, avoids exceptions and longjmps, and provides
-** clear, explicit error handling and propagation.
+** Catch syntax remains plain C: `except` uses a scoped `for` pattern so
+** catch variables can be introduced in a local scope and still pair with
+** an `else` clause naturally.  Full usage examples are in the docs.
 */
 
 #define NeedfulResult(T)  T
@@ -580,17 +510,11 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 **
 ** Docs: https://needful.metaeducation.com/contra
 **
-** The idea behind a Sink() is to be able to mark on a function's interface
-** when a function argument passed by pointer is intended as an output.
-** This has benefits of documentation, and can also be given some teeth by
-** scrambling the memory that the pointer points at (so long as it isn't an
-** "in-out" parameter).
+** Sink() marks pointer outputs in function interfaces.  In enhanced builds,
+** wrappers add checks and optional corruption semantics to catch misuse.
 **
-** But there's another feature implemented here, which is *covariance* for
-** input parameters, and "contravariance" for output parameters.  This only
-** matters if you're applying inheritance selectively to datatypes in C++
-** builds to add checking to your C codebase.  See the implementation of
-** contravariance in /needful-enhanced/needful-contra.hpp for more details.
+** Enhanced builds also support covariance for inputs and contravariance for
+** outputs when selective C++ inheritance is used for extra checking.
 */
 
 #define NeedfulSink(T)  T *
@@ -606,12 +530,6 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 **
 ** Type-checks an expression against T at compile-time without runtime cost.
 ** Uses no function template, so not a call even in unoptimized debug builds!
-**
-**      int* ptr = ...;
-**      void *p = known(int*, ptr);  // succeeds at compile-time
-**
-**      char* ptr = ...;
-**      void *p = known(int*, ptr);   // ERROR: fails at compile-time
 **
 ** As with casts, lenient forms pass through a const T* if the input is const,
 ** vs. needing `const T*` at callsites.  `rigid_known()` enforces mutability.
@@ -646,19 +564,14 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 **
 ** Docs: https://needful.metaeducation.com/cast
 **
-** These macros for casting provide *easier-to-spot* variants of parentheses
-** cast (so you can see where the casts are in otherwise-parenthesized
-** expressions).  They also document the semantic purpose of the cast.
+** These macros make casts easy to spot and label their intent.
 **
 ** The C definitions are trivial: they all act like a parenthesized cast.  But
-** NEEDFUL_CPP_ENHANCED builds enforce narrower policies.  Also, the casts are
-** designed to be "hookable" in C++.  These can be compile-time checks (to
-** limit what types can be cast to what), as well as runtime checks that can
-** actually validate the bits being cast are legal for the target type!
+** NEEDFUL_CPP_ENHANCED builds enforce narrower policies.  In C++, casts are
+** also hookable for compile-time and runtime validation.
 **
-** All casts have zero overhead in release builds.  And Needful bends over
-** backwards so that debug builds (which won't inline functions) avoid using
-** functions where possible--almost everything is done at compile-time.
+** Release builds are zero-overhead; debug builds are structured to minimize
+** non-inlined helper overhead.
 **
 *****[[ CAST SELECTION GUIDE ]]***********************************************
 **
@@ -858,20 +771,8 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 **
 ** Docs: https://needful.metaeducation.com/comments
 **
-** The idea beind shorthands like `possibly()` is to replace comments that are
-** carrying information about something that *might* be true:
-**
-**     int i = Get_Integer(...);  // i may be < 0
-**
-** Even the C no-op version of `possibly()` lets you break it out so the
-** visual flow is better, and less likely to overflow a line:
-**
-**     int i = Get_Integer(...);
-**     possibly(i < 0);
-**
-** But the C++ overload of STATIC_ASSERT_DECLTYPE_BOOL() allows it to make
-** sure your expression is well-formed at compile-time.  This pattern is
-** applied to the others as well, keeping your identifiers up to date.
+** Shorthands like `possibly()` turn comments into compile-checked intent
+** annotations in enhanced C++ builds, while staying no-ops in C.
 **
 ** Uppercase versions, can be used in global scope (more limited abilities)
 */
@@ -929,15 +830,13 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
 /*****************************************************************************
 **
-**  OPTIONAL SHORHANDS FOR THE `NEEDFUL_XXX` MACROS AS JUST `XXX` MACROS
+**  OPTIONAL SHORTHANDS FOR THE `NEEDFUL_XXX` MACROS AS JUST `XXX` MACROS
 **
 ******************************************************************************
 **
-** These are SIMPLE ALIASES, and the parameterization is given as a comment
-** for documentation purposes.  There can be big breakages when an expansion
-** might produce commas inside angle brackets in C++ builds, and variadic
-** forwarding doesn't always work around that.  It's cleaner and safer (and
-** faster at compile time) to do it this way.
+** These are simple aliases; signatures are documented in comments.
+** Avoiding variadic forwarding here sidesteps comma-in-angle-bracket macro
+** breakage in C++ and keeps compile times predictable.
 */
 
 #if !defined(NEEDFUL_DEFINE_ALL_SHORTHANDS)
@@ -1142,7 +1041,7 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 */
 
 #if !defined(NEEDFUL_CPP_ENHANCED)
-    #define NEEDFUL_CPP_ENHANCED  0  // Note: can still be compiled as C++
+    #define NEEDFUL_CPP_ENHANCED  0  /* Note: can still be compiled as C++ */
 #endif
 
 #define NEEDFUL_VERSION_MAJOR  0
@@ -1218,7 +1117,7 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 #endif
 #if NEEDFUL_NULLPTR_SHIM
   #ifdef __cplusplus
-    #include <cstddef>  // defines `using nullptr_t = decltype(nullptr);`
+    #include <cstddef>  /* defines `using nullptr_t = decltype(nullptr);` */
   #else
     #if !defined(nullptr)
       #define nullptr  (void*)0
