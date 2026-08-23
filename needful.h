@@ -959,8 +959,29 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 #define NEEDFUL_STATIC_ASSERT_NOT(cond) \
     NEEDFUL_STATIC_ASSERT(! (cond))
 
-#define NEEDFUL_STATIC_FAIL(msg) \
-    typedef int static_fail_##msg[-1]  /* message has to be a C identifier */
+/* NEEDFUL_STATIC_FAIL(msg) takes a STRING LITERAL, in every build mode.
+**
+** It used to take a bare C identifier here (it was token-pasted into a type
+** name) while the C++ override stringified whatever it was handed.  So the
+** same source did not compile both ways:  STATIC_FAIL("no analyzer") built
+** under C++ and was a syntax error as C, and STATIC_FAIL(no_analyzer) built
+** as C but produced a differently-worded diagnostic under C++.  A string is
+** the spelling that works everywhere, matches static_assert convention, and
+** lets the message contain spaces.
+**
+** Pre-C11 C has no _Static_assert, so it falls back to a negative-size array
+** typedef.  That keeps the construct a hard error -- which is the whole
+** point -- but the message itself is lost, since there is nowhere to put it.
+*/
+
+#if defined(__cplusplus)
+    #define NEEDFUL_STATIC_FAIL(msg)  static_assert(0, msg)
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+    #define NEEDFUL_STATIC_FAIL(msg)  _Static_assert(0, msg)
+#else
+    #define NEEDFUL_STATIC_FAIL(msg) /* message unavailable pre-C11 */ \
+        typedef int NEEDFUL_UNIQUE_NAME(needful_static_fail_)[-1]
+#endif
 
 
 /****[[ STATIC ASSERT LVALUE TO HELP EVIL MACRO USAGE ]]**********************
