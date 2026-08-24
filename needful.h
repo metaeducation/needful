@@ -21,7 +21,7 @@
 ** and rebuild as C++.  The same macros light up with compile-time enforcement
 ** that catches real bugs.  For example:
 **
-**     Option(Foo*) Find_Foo(int id);      // in C, this IS just `Foo*`
+**     Option(Foo*) Find_Foo(int id);      // in C, Option(Foo*) IS just `Foo*`
 **
 **     Foo* foo = Find_Foo(id);            // enhanced C++: compile error
 **
@@ -348,13 +348,27 @@ typedef enum {
 ** so catch variables can be introduced in a local scope and still pair with
 ** an `else` clause naturally.  Full usage examples are in the docs.
 **
-** Your project supplies the failure storage; see the docs for the hooks, or
-** define NEEDFUL_DECLARE_RESULT_HOOKS for a single-threaded default set.
+** Your project supplies the failure storage, as four hooks:
+**
+**     Needful_Get_Failure()             is a failure pending?
+**     Needful_Set_Failure(error)        record one
+**     Needful_Test_And_Clear_Failure()  take it, leaving none pending
+**     Needful_Panic_Abruptly(error)     report it and do not come back
+**
+** Or define NEEDFUL_DECLARE_RESULT_HOOKS for a single-threaded default set.
 */
 
 #define NeedfulResult(T)  T
 
 #define NEEDFUL_RESULT_0  needful_nocast_0  /* unique type if C++ enhanced */
+
+/* Derived from the hooks above rather than being a fifth one, so that it
+** honors a project's NEEDFUL_ASSERT() like every other Needful check does.
+** (`#undef` and redefine if you want the diagnostic to name the pending
+** error, which this spelling cannot do.)
+*/
+#define Needful_Assert_Not_Failing() \
+    NEEDFUL_ASSERT(! Needful_Get_Failure())
 
 #define needful_make_failure(...) \
     (Needful_Assert_Not_Failing(), \
@@ -1028,8 +1042,9 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
     exit(1);
 }
 
-#define Needful_Assert_Not_Failing() \
-    NEEDFUL_ASSERT(g_needful_failure == (const char*)0)
+/* (Needful_Assert_Not_Failing() is derived in the Result(T) section, not
+** supplied here -- it is not one of the four hooks.)
+*/
 
 #endif  /* NEEDFUL_DECLARE_RESULT_HOOKS */
 
