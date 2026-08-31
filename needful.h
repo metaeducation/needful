@@ -1,6 +1,6 @@
 /*
 **  file: %needful.h
-**  summary: "Needful: Safer C without changing your C"
+**  summary: "Needful: Stricter C checks without changing your C"
 **  homepage: https://needful.metaeducation.com
 **
 ******************************************************************************
@@ -15,6 +15,10 @@
 **
 ** Needful is a single-header library that adds typed options, typed results,
 ** visible casts, and compile-time intent checks to C.
+**
+** It is a type-discipline layer, not a memory-safety layer: it catches
+** nullability and API-usage mistakes, but does not prevent use-after-free,
+** buffer overruns, data races, or integer overflow.
 **
 ** The key trick: every Needful construct compiles as a transparent macro in C.
 ** But add companion needful-enhanced/ files, `#define NEEDFUL_CPP_ENHANCED 1`,
@@ -109,6 +113,15 @@
 **      a later language standard):
 **
 **      https://needful.metaeducation.com/faq#cpp11-baseline
+**
+**      For CI enforcement, run the checked build with warnings as errors
+**      (`-Werror` / `/WX`).  Without that, many "must use / must handle"
+**      diagnostics remain warnings and do not fail the build.
+**
+**      - Still meaningful without `-Werror`/`/WX`: most hard type checks
+**        (Need/Option/Sink-Init-Contra/known and comment expression checks)
+**      - Depends on `-Werror`/`/WX` for hard enforcement: Fallible/Result
+**        dropped-value and must-use diagnostics
 **
 **   4. CI can run both modes: C for production, C++ for stronger checks.
 **
