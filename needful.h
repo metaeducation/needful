@@ -104,8 +104,11 @@
 **
 **      https://github.com/metaeducation/needful-enhanced
 **
-**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11+.
-**      Same source, stricter checking.
+**      Then `#define NEEDFUL_CPP_ENHANCED 1` and build as C++11 or higher.
+**      Same source, stricter checking.  (See FAQ for why the baseline isn't
+**      a later language standard):
+**
+**      https://needful.metaeducation.com/faq#cpp11-baseline
 **
 **   4. CI can run both modes: C for production, C++ for stronger checks.
 **
