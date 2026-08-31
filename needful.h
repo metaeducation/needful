@@ -406,10 +406,10 @@ typedef enum {
     Needful_Assert_Not_Failing()
 
 #define needful_catch_if_failed(_decl_) \
-    /* _stmt_ */ needful_postfix_extract_result; /* v-- see docs RE:_once */ \
-    for (_decl_ = Needful_Get_Failure(), *_once = NEEDFUL_NULLPTR; \
-            !_once; ++_once) \
-      if (Needful_Test_And_Clear_Failure()) /* allow else clause to attach */
+    /* _stmt_ */ needful_postfix_extract_result; \
+    for (int _done_ = 0; _done_ == 0; ) \
+        for (_decl_ = Needful_Get_Failure(); _done_ == 0; _done_ = 1) \
+            if (Needful_Test_And_Clear_Failure()) /* allow else to attach */
         /* {body} implicitly picked up after macro by for, decl is scoped */
 
 #define needful_extract_failure(_expr_) \
