@@ -358,7 +358,8 @@ typedef enum {
 **     Needful_Test_And_Clear_Failure()  take it, leaving none pending
 **     Needful_Panic_Abruptly(error)     report it and do not come back
 **
-** Or define NEEDFUL_DECLARE_RESULT_HOOKS for a single-threaded default set.
+** Or define NEEDFUL_DECLARE_SINGLETHREADED RESULT_HOOKS as 1 for a
+** single-threaded default set.
 */
 
 #define NeedfulResult(T)  T
@@ -1015,12 +1016,13 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
 ** Docs: https://needful.metaeducation.com/result#setup-result-hooks
 **
 ** Result(T) needs somewhere to store a pending failure, and your project
-** normally supplies that.  Defining NEEDFUL_DECLARE_RESULT_HOOKS in exactly
-** one translation unit gets a minimal single-threaded set, for prototyping
-** and for the test suite.
+** supplies that.  But defining NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS in
+** exactly one translation unit gets a minimal single-threaded set,
+** for prototyping and for the test suite.
 */
 
-#if defined(NEEDFUL_DECLARE_RESULT_HOOKS) && NEEDFUL_DECLARE_RESULT_HOOKS
+#if defined(NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS) \
+    && NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS
 
 #include <stdio.h>   /* fprintf, fflush, stderr */
 #include <stdlib.h>  /* exit */
@@ -1049,7 +1051,7 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 ** supplied here -- it is not one of the four hooks.)
 */
 
-#endif  /* NEEDFUL_DECLARE_RESULT_HOOKS */
+#endif  /* NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS */
 
 
 /*****************************************************************************
