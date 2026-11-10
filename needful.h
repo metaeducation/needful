@@ -230,6 +230,13 @@ typedef enum {
 **
 **     char* buf = infallible Try_Allocate(size);  // asserts in debug
 **
+** The two types share the same `none` state (T's falsey/0 state), but are not
+** interchangeable.  An Option(T) becomes a Fallible(T) implicitly--declaring
+** that absence is a failure *adds* an obligation.  Going the other way says
+** a failure is merely an absence, so it takes the `fallible` operator:
+**
+**     Option(Foo*) foo = fallible Try_Find_Foo(id);  // failure => none
+**
 ** Fallible(T) is for RETURN TYPES; FallibleVar(T) is the same type for every
 ** other position--locals, parameters, struct members, typedefs.  The split
 ** exists because the must-use annotation is diagnosed anywhere but a return
@@ -282,6 +289,7 @@ typedef enum {
 #define NeedfulFallibleVar(T)  T  /* locals, parameters, members, typedefs */
 
 #define needful_infallible  /* no-op in C build */
+#define needful_fallible  /* no-op in C build; Fallible(T) => Option(T) */
 
 
 /****[[ NONE-REACTIVE MACROS: THE Fallible(T) DISCHARGE VOCABULARY ]]*********
@@ -1144,6 +1152,7 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
     #define Fallible /* (T) */              NeedfulFallible
     #define FallibleVar /* (T) */           NeedfulFallibleVar
     #define infallible /* ... */            needful_infallible
+    #define fallible /* ... */              needful_fallible
 
     #define is_none /* (expr) */            needful_is_none
     #define return_if_none /* (expr) */     needful_return_if_none
