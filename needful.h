@@ -16,10 +16,6 @@
 ** Needful is a single-header library that adds typed options, typed results,
 ** visible casts, and compile-time intent checks to C.
 **
-** It is a type-discipline layer, not a memory-safety layer: it catches
-** nullability and API-usage mistakes, but does not prevent use-after-free,
-** buffer overruns, data races, or integer overflow.
-**
 ** The key trick: every Needful construct compiles as a transparent macro in C.
 ** But add companion needful-enhanced/ files, `#define NEEDFUL_CPP_ENHANCED 1`,
 ** and rebuild as C++.  The same macros light up with compile-time enforcement
@@ -46,8 +42,7 @@
 **                 boolean coercion: `if (ptr)` on a Need(T) is a compile
 **                 error--null-checking a guarantee signals a logic bug.
 **
-**   Option(T)     Need(T)'s dual: a value that legitimately may be absent.
-**                 Rust-like optional using T's falsey state as the sentinel--
+**   Option(T)     Rust-like optional using T's falsey state as the sentinel--
 **                 same size as T, no extra bool!  `unwrap` extracts with a
 **                 null-check panic; `opt` skips it (unsafe).  C++ enforces
 **                 that Option(T) can't silently pass as a plain T.
@@ -129,15 +124,9 @@
 **
 ****[[ BEFORE YOU INCLUDE ]]**************************************************
 **
-** A. Needful's runtime invariant checks route through `NEEDFUL_ASSERT(expr)`.
-**    If you don't define it, Needful includes `<assert.h>` and defaults it to
-**    the platform `assert()`.  Projects that need debugger-friendlier
-**    behavior can define `NEEDFUL_ASSERT(expr)` before including needful.h,
-**    or include their own assert replacement header first.
-**
-**    Likewise `abort_if_none()` routes through `NEEDFUL_ABORT()`, which
-**    defaults to `<stdlib.h>`'s `abort()`.  Define either macro beforehand and
-**    Needful will not include the corresponding standard header at all.
+** [A] Define `NEEDFUL_ASSERT(expr)` and/or `NEEDFUL_ABORT()` to reroute them.
+**     Otherwise they default to `assert()` and `abort()`--and only then are
+**     <assert.h> and <stdlib.h> included.
 */
 
 #ifndef NEEDFUL_H_INCLUDED  /* "include guard" allows multiple #includes */
@@ -156,17 +145,9 @@
 
 /*****************************************************************************
 **
-**  PART 1: THE VOCABULARY
+**  PART 1: THE VOCABULARY (CONSTRUCTS YOU USE IN YOUR OWN CODE)
 **
-******************************************************************************
-**
-** These are the constructs you write in your own code.  Each section links to
-** its documentation page--the rationale, worked examples, and the details of
-** what each compilation mode enforces--all live there rather than here.
-**
-** The utilities these are built from (unreachable, SCOPE_GUARD, the static
-** assert family, the shims) are in PART 2, out of the way.
-*/
+*****************************************************************************/
 
 
 /***[[ Need(T): REQUIRED NON-NULL/NON-ZERO, BOOL-COERCION BLOCKED ]]*********
@@ -700,7 +681,7 @@ typedef enum {
    #define NEEDFUL_DOES_CORRUPTIONS  0
 #endif
 
-#if (! NEEDFUL_DOES_CORRUPTIONS)
+#if !NEEDFUL_DOES_CORRUPTIONS
     #define Corrupt_If_Needful(var)  NEEDFUL_NOOP
     #define Assert_Corrupted_If_Needful(ptr)  NEEDFUL_NOOP
 #else
@@ -720,27 +701,41 @@ typedef enum {
 
 /*****************************************************************************
 **
-**  PART 2: THE PLUMBING
+**  PART 2: THE PLUMBING (PORTABILITY SHIMS AND UTILITIES USED BY PART 1)
 **
-******************************************************************************
+*****************************************************************************/
+
+
+/****[[ NEEDFUL_NULLPTR AND OPTIONAL nullptr SHIM ]]**************************
 **
-** Portability shims and small utilities that PART 1 is built out of.  There
-** is nothing here you have to read to use Needful; the vocabulary above is
-** the whole interface.  These are `#define`s, so the vocabulary macros may
-** reference them despite appearing earlier in the file.
+** C's `NULL` may be a plain `0`, which variadics read as an int and Option(T*)
+** rejects.  So the shim gives pre-C23 C a `nullptr`; Needful's own code uses
+** NEEDFUL_NULLPTR either way.  (Why not NULL:  /setup#nullptr)
 */
 
-
-/****[[ NEEDFUL_NULLPTR: INTERNAL SPELLING OF THE NULL POINTER ]]*************
-**
-** Needful's own null pointer, independent of the optional `nullptr` shim at
-** the end of the file.  (C++ won't implicitly convert `(void*)0` to a `T*`.)
-*/
-
-#if !defined(__cplusplus)
-    #define NEEDFUL_NULLPTR  ((void*)0)
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) \
+    && __STDC_VERSION__ >= 202311L \
+    && (!defined(_MSC_VER) || defined(__clang__))  /* MSVC lacks it so far */
+    #define NEEDFUL_C23_NULLPTR  1  /* a real keyword (not a macro) */
 #else
+    #define NEEDFUL_C23_NULLPTR  0
+#endif
+
+#if defined(__cplusplus) || NEEDFUL_C23_NULLPTR
     #define NEEDFUL_NULLPTR  nullptr
+#else
+    #define NEEDFUL_NULLPTR  ((void*)0)
+#endif
+
+#if !defined(NEEDFUL_NO_NULLPTR_SHIM)
+    #define NEEDFUL_NO_NULLPTR_SHIM  0
+#endif
+#if !NEEDFUL_NO_NULLPTR_SHIM
+  #if defined(__cplusplus)
+    #include <cstddef>  /* defines `using nullptr_t = decltype(nullptr);` */
+  #elif !NEEDFUL_C23_NULLPTR && !defined(nullptr)  /* don't shadow keyword */
+    #define nullptr  ((void*)0)
+  #endif
 #endif
 
 
@@ -921,7 +916,8 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
 ** translation unit gives a minimal set of the four hooks, for prototyping.
 */
 
-#if defined(NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS) && NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS
+#if defined(NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS) \
+    && NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS
 
 #include <stdio.h>   /* fprintf, fflush, stderr */
 #include <stdlib.h>  /* exit */
@@ -950,13 +946,9 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
 /*****************************************************************************
 **
-**  OPTIONAL SHORTHANDS FOR THE `NEEDFUL_XXX` MACROS AS JUST `XXX` MACROS
+**  PART 3: OPTIONAL ALIASES FOR `NEEDFUL_XXX` MACROS AS JUST `XXX` MACROS
 **
-******************************************************************************
-**
-** Simple aliases, with signatures in comments.  (Not variadic forwarders,
-** which break on commas in C++ template arguments.)
-*/
+*****************************************************************************/
 
 #if !defined(NEEDFUL_DEFINE_ALL_SHORTHANDS)
     #define NEEDFUL_DEFINE_ALL_SHORTHANDS  0
@@ -1158,13 +1150,9 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
 
 /*****************************************************************************
 **
-**  OPTIONAL C++ OVERRIDES FOR ABOVE DEFINITIONS TO BRING THE MACROS TO LIFE
+**  PART 4: OPTIONALLY HAVE NEEDFUL_CPP_ENHANCED #undef AND re-#define MACROS
 **
-******************************************************************************
-**
-** With NEEDFUL_CPP_ENHANCED, the companion C++ headers #undef the simple
-** definitions above and redefine them with elaborately-designed machinery!
-*/
+*****************************************************************************/
 
 #if !defined(NEEDFUL_CPP_ENHANCED)
     #define NEEDFUL_CPP_ENHANCED  0  /* Note: can still be compiled as C++ */
@@ -1228,26 +1216,6 @@ NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
     #if NEEDFUL_CAST_CALLS_HOOKS
         #error "NEEDFUL_CAST_CALLS_HOOKS requires NEEDFUL_CPP_ENHANCED"
     #endif
-#endif
-
-
-/*****************************************************************************
-**
-** C's `NULL` can't be returned as an Option(T*), so nearly every client will
-** want `nullptr` in C.  Purely cosmetic: Needful itself uses NEEDFUL_NULLPTR.
-*/
-
-#if !defined(NEEDFUL_NULLPTR_SHIM)
-    #define NEEDFUL_NULLPTR_SHIM  NEEDFUL_DEFINE_ALL_SHORTHANDS
-#endif
-#if NEEDFUL_NULLPTR_SHIM
-  #ifdef __cplusplus
-    #include <cstddef>  /* defines `using nullptr_t = decltype(nullptr);` */
-  #else
-    #if !defined(nullptr)
-      #define nullptr  (void*)0
-    #endif
-  #endif
 #endif
 
 
