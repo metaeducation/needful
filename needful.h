@@ -92,6 +92,8 @@
 **      diagnostics (Fallible/Result) are otherwise only warnings.
 **
 **   4. CI can run both modes: C for production, C++ for stronger checks.
+**      But don't link enhanced and plain objects together: the wrappers
+**      change the ABI (e.g. how MSVC returns them).  /setup#abi
 **
 ** The C definitions below are written out in full so you can see how simple
 ** they are.  (`#ifdef __cplusplus` is used only where *unavoidable*; C++
