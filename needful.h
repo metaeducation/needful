@@ -788,7 +788,7 @@ typedef enum {
 
  #if !defined(__cplusplus)
   #if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
-    #define NEEDFUL_NORETURN  _Noreturn  /* C99 and higher */
+    #define NEEDFUL_NORETURN  _Noreturn  /* C11 and higher */
   #else
     #define NEEDFUL_NORETURN  /* no-op in C pre-C11 */
   #endif
