@@ -272,8 +272,8 @@ typedef enum {
 **     Needful_Test_And_Clear_Failure()  take it, leaving none pending
 **     Needful_Panic_Abruptly(error)     report it and do not come back
 **
-** Or define NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS for a
-** single-threaded default set.
+** Or use a ready-made .h/.c pair from the needful repository:
+** needful-result-hooks-singlethreaded or needful-result-hooks-threadlocal.
 */
 
 #define NeedfulResult(T)  T
@@ -1146,47 +1146,6 @@ NEEDFUL_NORETURN static inline void needful_dead_end_inline(void) {
         #error "NEEDFUL_CAST_CALLS_HOOKS requires NEEDFUL_CPP_ENHANCED"
     #endif
 #endif
-
-
-/*****************************************************************************
-**
-**  ADDENDUM: DEFAULT SINGLE-THREADED Result(T) HOOKS (WORK OUT OF THE BOX)
-**
-******************************************************************************
-**
-** Docs: https://needful.metaeducation.com/result#setup-result-hooks
-**
-** `#define NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS 1` in exactly one
-** translation unit to get a minimal set of the four hooks, so Result(T)
-** works in plain C with no setup.  (Real projects usually supply their own.)
-*/
-
-#if defined(NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS) \
-    && NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS
-
-#include <stdio.h>   /* fprintf, fflush, stderr */
-#include <stdlib.h>  /* exit */
-
-const char* g_needful_failure;  /* can only define once in project */
-
-const char* Needful_Test_And_Clear_Failure() {
-    const char* e = g_needful_failure;
-    g_needful_failure = (const char*)0;
-    return e;
-}
-
-#define Needful_Get_Failure() \
-    g_needful_failure
-
-#define Needful_Set_Failure(error) \
-   (g_needful_failure = error)
-
-NEEDFUL_NORETURN void Needful_Panic_Abruptly(const char* error) {
-    fprintf(stderr, "Panic: %s\n", error);
-    fflush(stderr);
-    exit(1);
-}
-#endif  /* NEEDFUL_DECLARE_SINGLETHREADED_RESULT_HOOKS */
 
 
 #endif  /* !defined(NEEDFUL_H_INCLUDED) */
