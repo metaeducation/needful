@@ -719,8 +719,9 @@ typedef enum {
 **
 ** NEEDFUL_USED() quiets `-Wunused-variable`.  Enhanced builds can make
 ** NEEDFUL_UNUSED() scramble non-const contents, to catch later use.
-** NEEDFUL_SCOPE_GUARD declares a dummy variable, so statement macros like
-** return_if_failed are a compile error in an unbraced branch slot.
+** NEEDFUL_SCOPE_GUARD makes statement macros like return_if_failed a compile
+** error in an unbraced branch slot, at no runtime cost, in all builds.
+** (How: /result#scope-guard)
 */
 
 #define NEEDFUL_NOOP  ((void)0)
@@ -733,13 +734,9 @@ typedef enum {
 #define NEEDFUL_USED(...)    ((void)(__VA_ARGS__))
 #define NEEDFUL_UNUSED(...)  ((void)(__VA_ARGS__))
 
-#if defined(NDEBUG)
-    #define NEEDFUL_SCOPE_GUARD  NEEDFUL_NOOP
-#else
-    #define NEEDFUL_SCOPE_GUARD /* Clang v15 needs braces in switch cases */ \
-        int NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_); \
-        NEEDFUL_UNUSED(NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_))
-#endif
+#define NEEDFUL_SCOPE_GUARD /* typedef: a declaration w/no object or code */ \
+    typedef int NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_); \
+    NEEDFUL_USED(sizeof(NEEDFUL_UNIQUE_NAME(_statement_must_be_in_braces_)))
 
 
 /****[[ unreachable: INDICATE DIVERGENCE ]]***********************************
